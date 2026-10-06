@@ -20,6 +20,7 @@
 #include <string.h>                         /* memset                         */
 #include "unity.h"                          /* Unity testing framework        */
 #include "RegMem.h"                         /* Register memory emulation      */
+#include "CmsisHost.h"                      /* Core intrinsics emulation      */
 #include "Spi_Port.h"                       /* Module under test              */
 #include "MockRcc_Port.h"                   /* RCC module mock                */
 #include "MockNvic_Port.h"                  /* NVIC module mock               */
@@ -2005,6 +2006,47 @@ void Ut_Spi_Deinit_ReleaseError_ReturnsError( void )
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Deinit( UT_SPI_BUS ) );
     TEST_ASSERT_EQUAL_UINT32( 1u, utSpi_NvicIrqOffCnt );
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Get_DataConfig( UT_SPI_BUS, &readBack ) );
+}
+
+
+/**
+ * \brief   Interrupt service routine of every SPI ends with DSB.
+ *
+ * \details Every SPI of the MCU initialized as master in ISR mode, captured interrupt called once
+ *          without running transfer, peripheral deinitialized.
+ *
+ * \note    Device errata bug AB#670 (ES0182 2.1.3 "Store immediate overlapping exception return
+ *          operation might vector to incorrect interrupt", Arm ID 838869): a buffered store with
+ *          immediate offset still pending at the exception return may vector to an incorrect
+ *          interrupt. Workaround - DSB before the exception return of every handler.
+ *
+ * \par Expected results
+ * - Every ISR executes exactly one DSB.
+ */
+void Ut_Spi_Isr_AllPeriphs_EndWithDsb( void )
+{
+    const spi_DataConfig_t isrConfig = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_ISR );
+
+    for( spi_PeriphId_t periphId = (spi_PeriphId_t)0u; SPI_PERIPH_CNT > periphId; periphId++ )
+    {
+        spi_Config_t config = Ut_Spi_Get_Config();
+
+        config.PeriphId   = periphId;
+        config.DataConfig = &isrConfig;
+
+        Ut_Spi_Ignore_PeriphMocks();
+        utSpi_Isr = NULL;
+
+        TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Init( &config ) );
+        TEST_ASSERT_NOT_NULL( utSpi_Isr );
+
+        const uint32_t dsbCnt = CmsisHost_Get_InstrCnt( CMSISHOST_INSTR_DSB );
+
+        utSpi_Isr();
+
+        TEST_ASSERT_EQUAL_UINT32( dsbCnt + 1u, CmsisHost_Get_InstrCnt( CMSISHOST_INSTR_DSB ) );
+        TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Deinit( periphId ) );
+    }
 }
 
 

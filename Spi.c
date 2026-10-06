@@ -4192,6 +4192,7 @@ static spi_RequestState_t Spi_None_Xfer( spi_PeriphId_t periphId )
 static void Spi_Spi1_IsrHandler( void )
 {
     (void)Spi_Isr_Handler( SPI_PERIPH_1 );
+    __DSB();    /* Cortex-M4 erratum 838869: stores completed before the exception return */
 }
 #endif /* SPI1 */
 
@@ -4202,6 +4203,7 @@ static void Spi_Spi1_IsrHandler( void )
 static void Spi_Spi2_IsrHandler( void )
 {
     (void)Spi_Isr_Handler( SPI_PERIPH_2 );
+    __DSB();    /* Cortex-M4 erratum 838869: stores completed before the exception return */
 }
 #endif /* SPI2 */
 
@@ -4212,6 +4214,7 @@ static void Spi_Spi2_IsrHandler( void )
 static void Spi_Spi3_IsrHandler( void )
 {
     (void)Spi_Isr_Handler( SPI_PERIPH_3 );
+    __DSB();    /* Cortex-M4 erratum 838869: stores completed before the exception return */
 }
 #endif /* SPI3 */
 
@@ -4222,6 +4225,7 @@ static void Spi_Spi3_IsrHandler( void )
 static void Spi_Spi4_IsrHandler( void )
 {
     (void)Spi_Isr_Handler( SPI_PERIPH_4 );
+    __DSB();    /* Cortex-M4 erratum 838869: stores completed before the exception return */
 }
 #endif /* SPI4 */
 
@@ -4232,6 +4236,7 @@ static void Spi_Spi4_IsrHandler( void )
 static void Spi_Spi5_IsrHandler( void )
 {
     (void)Spi_Isr_Handler( SPI_PERIPH_5 );
+    __DSB();    /* Cortex-M4 erratum 838869: stores completed before the exception return */
 }
 #endif /* SPI5 */
 
@@ -4242,6 +4247,7 @@ static void Spi_Spi5_IsrHandler( void )
 static void Spi_Spi6_IsrHandler( void )
 {
     (void)Spi_Isr_Handler( SPI_PERIPH_6 );
+    __DSB();    /* Cortex-M4 erratum 838869: stores completed before the exception return */
 }
 #endif /* SPI6 */
 

@@ -87,6 +87,34 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
     #define IT_SPI_SLAVE_DMA_TX             ( SPI_DMA_CHANNEL_4 )
     #define IT_SPI_SLAVE_DMA_RX             ( SPI_DMA_CHANNEL_3 )
 
+#elif defined(IT_BOARD_NUCLEO_F411RE)
+
+    /** SPI1 master (APB2): SCK PA5 (D13), MISO PA6 (D12), MOSI PA7 (D11), NSS PA4 (A2) */
+    #define IT_SPI_MASTER                   ( SPI_PERIPH_1 )
+    #define IT_SPI_MASTER_RCC               ( RCC_PERIPH_SPI1 )
+    #define IT_SPI_MASTER_SCK               SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 )
+    #define IT_SPI_MASTER_MISO              SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_6, GPIO_ALT_FUNC_5 )
+    #define IT_SPI_MASTER_MOSI              SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 )
+    #define IT_SPI_MASTER_NSS               SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_4, GPIO_ALT_FUNC_5 )
+    #define IT_SPI_MASTER_NSS_PORT          ( GPIOA )
+    #define IT_SPI_MASTER_NSS_PIN           ( 4u )
+
+    /** SPI1 DMA streams (RM0383: DMA2 stream 3 / 0, channel 3) */
+    #define IT_SPI_MASTER_DMA               ( SPI_DMA_PERIPH_2 )
+    #define IT_SPI_MASTER_DMA_TX            ( SPI_DMA_CHANNEL_3 )
+    #define IT_SPI_MASTER_DMA_RX            ( SPI_DMA_CHANNEL_0 )
+
+    /** SPI2 slave (APB1): SCK PB13 (CN10-30), MISO PB14 (CN10-28), MOSI PB15 (CN10-26), wired to the master pins */
+    #define IT_SPI_SLAVE                    ( SPI_PERIPH_2 )
+    #define IT_SPI_SLAVE_SCK                SPI_PIN_ENCODE( SPI_PERIPH_2, GPIO_PORT_B, GPIO_PIN_ID_13, GPIO_ALT_FUNC_5 )
+    #define IT_SPI_SLAVE_MISO               SPI_PIN_ENCODE( SPI_PERIPH_2, GPIO_PORT_B, GPIO_PIN_ID_14, GPIO_ALT_FUNC_5 )
+    #define IT_SPI_SLAVE_MOSI               SPI_PIN_ENCODE( SPI_PERIPH_2, GPIO_PORT_B, GPIO_PIN_ID_15, GPIO_ALT_FUNC_5 )
+
+    /** SPI2 DMA streams (RM0383: DMA1 stream 4 / 3, channel 0) */
+    #define IT_SPI_SLAVE_DMA                ( SPI_DMA_PERIPH_1 )
+    #define IT_SPI_SLAVE_DMA_TX             ( SPI_DMA_CHANNEL_4 )
+    #define IT_SPI_SLAVE_DMA_RX             ( SPI_DMA_CHANNEL_3 )
+
 #else
     #error "Board of Spi integration tests is not defined (INTEGRATION_TEST_BOARD)."
 #endif
