@@ -59,7 +59,11 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
 
 /* ========================= SYMBOLIC CONSTANTS ============================= */
 
-#if defined(IT_BOARD_STM32F4DISCOVERY)
+/* Boards are named by their MCU (IT_BOARD_<MCU>, name of the board from the detection) */
+#if defined(IT_BOARD_STM32F405xG) || \
+    defined(IT_BOARD_STM32F407xG) || \
+    defined(IT_BOARD_STM32F415xG) || \
+    defined(IT_BOARD_STM32F417xG)
 
     /** SPI1 master (APB2): SCK PA5, MISO PA6, MOSI PA7, NSS PA4 */
     #define IT_SPI_MASTER                   ( SPI_PERIPH_1 )
@@ -87,7 +91,7 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
     #define IT_SPI_SLAVE_DMA_TX             ( SPI_DMA_CHANNEL_4 )
     #define IT_SPI_SLAVE_DMA_RX             ( SPI_DMA_CHANNEL_3 )
 
-#elif defined(IT_BOARD_NUCLEO_F411RE)
+#elif defined(IT_BOARD_STM32F411xE)
 
     /** SPI1 master (APB2): SCK PA5 (D13), MISO PA6 (D12), MOSI PA7 (D11), NSS PA4 (A2) */
     #define IT_SPI_MASTER                   ( SPI_PERIPH_1 )
