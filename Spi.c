@@ -466,9 +466,9 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
         }
 
         /* Device errata: SCK pin of master has to be fast enough for the kernel clock */
-        if( ( SPI_REQUEST_OK  == retState          ) &&
-            ( SPI_MODE_MASTER == spiConfig->Mode   ) &&
-            ( SPI_PIN_UNUSED  != spiConfig->SckPin )    )
+        if( ( SPI_REQUEST_OK     == retState          ) &&
+            ( SPI_MODE_MASTER    == spiConfig->Mode   ) &&
+            ( SPI_SCK_PIN_UNUSED != spiConfig->SckPin )    )
         {
             retState = Spi_Check_SckSpeed( periphId, spiConfig->PinSpeed );
         }
@@ -480,13 +480,13 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
         /*------------------------ GPIO pins ---------------------------------*/
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->SckPin, spiConfig->PinSpeed, Spi_Get_SckPull( spiConfig->ClockMode ) );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->SckPin, spiConfig->PinSpeed, Spi_Get_SckPull( spiConfig->ClockMode ) );
 
-            if( ( SPI_REQUEST_OK == retState         ) &&
-                ( SPI_PIN_UNUSED != spiConfig->SckPin )    )
+            if( ( SPI_REQUEST_OK     == retState          ) &&
+                ( SPI_SCK_PIN_UNUSED != spiConfig->SckPin )    )
             {
                 spi_PeriphRuntime[ periphId ].SckPinUsed = SPI_FUNCTION_ACTIVE;
-                spi_PeriphRuntime[ periphId ].SckPin     = spiConfig->SckPin;
+                spi_PeriphRuntime[ periphId ].SckPin     = (spi_PinCode_t)spiConfig->SckPin;
                 spi_PeriphRuntime[ periphId ].SckSpeed   = spiConfig->PinSpeed;
             }
             else
@@ -501,7 +501,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->MisoPin, spiConfig->PinSpeed, GPIO_PIN_PULL_NONE );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->MisoPin, spiConfig->PinSpeed, GPIO_PIN_PULL_NONE );
         }
         else
         {
@@ -510,7 +510,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->MosiPin, spiConfig->PinSpeed, GPIO_PIN_PULL_NONE );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->MosiPin, spiConfig->PinSpeed, GPIO_PIN_PULL_NONE );
         }
         else
         {
@@ -519,7 +519,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->NssPin, spiConfig->PinSpeed, GPIO_PIN_PULL_UP );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->NssPin, spiConfig->PinSpeed, GPIO_PIN_PULL_UP );
         }
         else
         {
@@ -667,10 +667,10 @@ spi_RequestState_t Spi_Get_DefaultConfig( spi_Config_t * const spiConfig )
         spiConfig->NssConfig.Polarity = SPI_NSS_POLARITY_LOW;
         spiConfig->NssConfig.Pulse    = SPI_FUNCTION_INACTIVE;
         spiConfig->DataConfig         = SPI_NULL_PTR;
-        spiConfig->SckPin             = SPI_PIN_UNUSED;
-        spiConfig->MisoPin            = SPI_PIN_UNUSED;
-        spiConfig->MosiPin            = SPI_PIN_UNUSED;
-        spiConfig->NssPin             = SPI_PIN_UNUSED;
+        spiConfig->SckPin             = SPI_SCK_PIN_UNUSED;
+        spiConfig->MisoPin            = SPI_MISO_PIN_UNUSED;
+        spiConfig->MosiPin            = SPI_MOSI_PIN_UNUSED;
+        spiConfig->NssPin             = SPI_NSS_PIN_UNUSED;
         spiConfig->PinSpeed           = SPI_PIN_SPEED_HIGH;
 
         retState = SPI_REQUEST_OK;
@@ -2792,10 +2792,10 @@ static spi_RequestState_t Spi_Check_Config( const spi_Config_t * const spiConfig
     {
         const spi_RequestState_t sizeState = Spi_Check_DataSize( spiConfig->DataSize );
         const spi_RequestState_t nssState  = Spi_Check_NssConfig( &spiConfig->NssConfig );
-        const spi_RequestState_t sckState  = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->SckPin );
-        const spi_RequestState_t misoState = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->MisoPin );
-        const spi_RequestState_t mosiState = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->MosiPin );
-        const spi_RequestState_t nssPState = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->NssPin );
+        const spi_RequestState_t sckState  = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->SckPin );
+        const spi_RequestState_t misoState = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->MisoPin );
+        const spi_RequestState_t mosiState = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->MosiPin );
+        const spi_RequestState_t nssPState = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->NssPin );
 
         if( ( SPI_REQUEST_OK == sizeState ) &&
             ( SPI_REQUEST_OK == nssState  ) &&
@@ -2826,7 +2826,8 @@ static spi_RequestState_t Spi_Check_Config( const spi_Config_t * const spiConfig
  *        and alternate function
  *
  * \param periphId [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
- * \param pinCode  [in]: Encoded pin (\ref SPI_PIN_ENCODE / \ref SPI_PIN_UNUSED)
+ * \param pinCode  [in]: Encoded pin, value from \ref spi_SckPin_t, \ref spi_MisoPin_t,
+ *                      \ref spi_MosiPin_t or \ref spi_NssPin_t (\ref SPI_PIN_UNUSED - unused pin)
  *
  * \return Returns \ref SPI_REQUEST_OK if the pin is unused or valid for the peripheral.
  *         Otherwise returns \ref SPI_REQUEST_ERROR.

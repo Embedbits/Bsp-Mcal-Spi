@@ -49,8 +49,8 @@ typedef struct
 /** \brief DMA configuration of one SPI peripheral */
 typedef struct
 {
-    spi_DmaStream_t  TxStream[ 2u ];  /**< Streams of transmit request (twice if only one exists) */
-    spi_DmaStream_t  RxStream[ 2u ];  /**< Streams of receive request (twice if only one exists)  */
+    spi_DmaStream_t  TxStream[ 3u ];  /**< Streams of transmit request (last one repeated if fewer exist) */
+    spi_DmaStream_t  RxStream[ 3u ];  /**< Streams of receive request (last one repeated if fewer exist)  */
     dma_IsrCallback  TxDoneIsr;       /**< Transmit stream transfer complete handler              */
     dma_IsrCallback  RxDoneIsr;       /**< Receive stream transfer complete handler               */
     dma_IsrCallback  TxErrorIsr;      /**< Transmit stream transfer error handler                 */
@@ -92,7 +92,7 @@ typedef uint16_t spi_DmaDummy_t;
     .TxDoneIsr = Spi_Dma_##name##_TxDone, .RxDoneIsr  = Spi_Dma_##name##_RxDone,                                      \
     .TxErrorIsr = Spi_Dma_##name##_TxError, .RxErrorIsr = Spi_Dma_##name##_RxError
 
-static spi_RequestState_t Spi_Dma_Get_Stream      ( spi_PeriphId_t periphId, spi_DmaDir_t dmaDir, spi_DmaPeriphId_t dmaId, spi_DmaChannelId_t streamId, dma_PeriphReqId_t * const channelSel );
+static spi_RequestState_t Spi_Dma_Get_Stream      ( spi_PeriphId_t periphId, spi_DmaDir_t dmaDir, spi_DmaCode_t dmaCode, dma_PeriphReqId_t * const channelSel );
 static spi_RequestState_t Spi_Dma_Set_ChannelInit ( spi_PeriphId_t periphId, spi_DmaDir_t dmaDir );
 static spi_RequestState_t Spi_Dma_Set_ChannelOff  ( spi_PeriphId_t periphId, spi_DmaDir_t dmaDir );
 static spi_RequestState_t Spi_Dma_Check_Buffers   ( const spi_XferContext_t * const xferCtx );
@@ -124,7 +124,7 @@ SPI_DMA_DECLARE_HANDLERS( Spi6 );
 /* ========================== SYMBOLIC CONSTANTS ============================ */
 
 /** Count of streams connected to one SPI request (\ref spi_DmaPeriphConfig_t) */
-#define SPI_DMA_STREAM_OPTIONS      ( 2u )
+#define SPI_DMA_STREAM_OPTIONS      ( 3u )
 
 /** Buffer bytes of 16-bit frame (buffer alignment) */
 #define SPI_DMA_FRAME_BYTES_16BIT   ( 2u )
@@ -136,39 +136,77 @@ SPI_DMA_DECLARE_HANDLERS( Spi6 );
 /* =========================== LOCAL VARIABLES ============================== */
 
 /**
- * \brief DMA streams of SPI requests (RM0090 / RM0383 / RM0390 DMA request mapping, streams
- *        common for all STM32F4 devices with the peripheral)
+ * \brief DMA streams of SPI requests (RM0090 / RM0383 / RM0390 DMA request mapping, STM32CubeMX
+ *        database; the third stream of SPI1_TX / SPI4_RX / SPI5_TX exists on the newer devices only)
  */
 static const spi_DmaPeriphConfig_t spi_DmaPeriphConfig[ ] =
 {
 #ifdef SPI1
-    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_3 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_3 } },
-      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_0, DMA_REQ_CHANNEL_3 }, { DMA_PERIPH_2, DMA_STREAM_2, DMA_REQ_CHANNEL_3 } },
+    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_3 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_3 },
+#if defined(STM32F410Cx) || \
+    defined(STM32F410Rx) || \
+    defined(STM32F410Tx) || \
+    defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+                    { DMA_PERIPH_2, DMA_STREAM_2, DMA_REQ_CHANNEL_2 } },
+#else
+                    { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_3 } },
+#endif
+      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_0, DMA_REQ_CHANNEL_3 }, { DMA_PERIPH_2, DMA_STREAM_2, DMA_REQ_CHANNEL_3 }, { DMA_PERIPH_2, DMA_STREAM_2, DMA_REQ_CHANNEL_3 } },
       SPI_DMA_ISR_CONFIG( Spi1 ) },
 #endif /* SPI1 */
 #ifdef SPI2
-    { .TxStream = { { DMA_PERIPH_1, DMA_STREAM_4, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_4, DMA_REQ_CHANNEL_0 } },
-      .RxStream = { { DMA_PERIPH_1, DMA_STREAM_3, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_3, DMA_REQ_CHANNEL_0 } },
+    { .TxStream = { { DMA_PERIPH_1, DMA_STREAM_4, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_4, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_4, DMA_REQ_CHANNEL_0 } },
+      .RxStream = { { DMA_PERIPH_1, DMA_STREAM_3, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_3, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_3, DMA_REQ_CHANNEL_0 } },
       SPI_DMA_ISR_CONFIG( Spi2 ) },
 #endif /* SPI2 */
 #ifdef SPI3
-    { .TxStream = { { DMA_PERIPH_1, DMA_STREAM_5, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_7, DMA_REQ_CHANNEL_0 } },
-      .RxStream = { { DMA_PERIPH_1, DMA_STREAM_0, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_2, DMA_REQ_CHANNEL_0 } },
+    { .TxStream = { { DMA_PERIPH_1, DMA_STREAM_5, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_7, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_7, DMA_REQ_CHANNEL_0 } },
+      .RxStream = { { DMA_PERIPH_1, DMA_STREAM_0, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_2, DMA_REQ_CHANNEL_0 }, { DMA_PERIPH_1, DMA_STREAM_2, DMA_REQ_CHANNEL_0 } },
       SPI_DMA_ISR_CONFIG( Spi3 ) },
 #endif /* SPI3 */
 #ifdef SPI4
-    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_1, DMA_REQ_CHANNEL_4 }, { DMA_PERIPH_2, DMA_STREAM_4, DMA_REQ_CHANNEL_5 } },
-      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_0, DMA_REQ_CHANNEL_4 }, { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_5 } },
+    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_1, DMA_REQ_CHANNEL_4 }, { DMA_PERIPH_2, DMA_STREAM_4, DMA_REQ_CHANNEL_5 }, { DMA_PERIPH_2, DMA_STREAM_4, DMA_REQ_CHANNEL_5 } },
+      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_0, DMA_REQ_CHANNEL_4 }, { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_5 },
+#if defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+                    { DMA_PERIPH_2, DMA_STREAM_4, DMA_REQ_CHANNEL_4 } },
+#else
+                    { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_5 } },
+#endif
       SPI_DMA_ISR_CONFIG( Spi4 ) },
 #endif /* SPI4 */
 #ifdef SPI5
-    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_4, DMA_REQ_CHANNEL_2 }, { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_7 } },
-      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_2 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_7 } },
+    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_4, DMA_REQ_CHANNEL_2 }, { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_7 },
+#if defined(STM32F410Cx) || \
+    defined(STM32F410Rx) || \
+    defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+                    { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_5 } },
+#else
+                    { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_7 } },
+#endif
+      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_3, DMA_REQ_CHANNEL_2 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_7 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_7 } },
       SPI_DMA_ISR_CONFIG( Spi5 ) },
 #endif /* SPI5 */
 #ifdef SPI6
-    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_1 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_1 } },
-      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_1 }, { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_1 } },
+    { .TxStream = { { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_1 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_1 }, { DMA_PERIPH_2, DMA_STREAM_5, DMA_REQ_CHANNEL_1 } },
+      .RxStream = { { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_1 }, { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_1 }, { DMA_PERIPH_2, DMA_STREAM_6, DMA_REQ_CHANNEL_1 } },
       SPI_DMA_ISR_CONFIG( Spi6 ) },
 #endif /* SPI6 */
 };
@@ -191,9 +229,10 @@ static spi_DmaDummy_t spi_DmaDummyRx = 0u;
 /* ========================= EXPORTED FUNCTIONS ============================= */
 
 /**
- * \brief Checks DMA related part of the data handling configuration - DMA peripherals, streams
- *        connected to the SPI requests, priorities, different streams for transmission and
- *        reception
+ * \brief Checks DMA related part of the data handling configuration - priorities, both streams
+ *        are items of the lists \ref spi_TxDma_t / \ref spi_RxDma_t of the SPI peripheral (the
+ *        streams of the SPI requests of their direction, transmission and reception never share
+ *        a stream)
  *
  * \param periphId   [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
  * \param dataConfig [in]: Pointer to data handling configuration. Must not be NULL.
@@ -210,15 +249,13 @@ spi_RequestState_t Spi_Dma_Check_Config( spi_PeriphId_t periphId, const spi_Data
         ( SPI_NULL_PTR  != dataConfig )    )
     {
         if( ( (uint32_t)DMA_PRIORITY_CNT > (uint32_t)dataConfig->TxDmaPriority ) &&
-            ( (uint32_t)DMA_PRIORITY_CNT > (uint32_t)dataConfig->RxDmaPriority ) &&
-            ( ( dataConfig->TxDmaPeriphId  != dataConfig->RxDmaPeriphId  ) ||
-              ( dataConfig->TxDmaChannelId != dataConfig->RxDmaChannelId )    )    )
+            ( (uint32_t)DMA_PRIORITY_CNT > (uint32_t)dataConfig->RxDmaPriority )    )
         {
-            retState = Spi_Dma_Get_Stream( periphId, SPI_DMA_DIR_TX, dataConfig->TxDmaPeriphId, dataConfig->TxDmaChannelId, &channelSel );
+            retState = Spi_Dma_Get_Stream( periphId, SPI_DMA_DIR_TX, (spi_DmaCode_t)dataConfig->TxDma, &channelSel );
 
             if( SPI_REQUEST_OK == retState )
             {
-                retState = Spi_Dma_Get_Stream( periphId, SPI_DMA_DIR_RX, dataConfig->RxDmaPeriphId, dataConfig->RxDmaChannelId, &channelSel );
+                retState = Spi_Dma_Get_Stream( periphId, SPI_DMA_DIR_RX, (spi_DmaCode_t)dataConfig->RxDma, &channelSel );
             }
             else
             {
@@ -539,32 +576,36 @@ spi_RequestState_t Spi_Dma_Check_Done( spi_PeriphId_t periphId )
 /**
  * \brief Looks up DMA stream connected to the SPI request
  *
+ * The DMA peripheral and the stream are decoded from the item of the DMA stream list, the item has to
+ * belong to the SPI peripheral.
+ *
  * \param periphId    [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
  * \param dmaDir      [in]: Direction, value from \ref spi_DmaDir_t
- * \param dmaId       [in]: DMA peripheral, value from \ref spi_DmaPeriphId_t
- * \param streamId    [in]: DMA stream, value from \ref spi_DmaChannelId_t
+ * \param dmaCode     [in]: Item of \ref spi_TxDma_t / \ref spi_RxDma_t (encoded DMA stream)
  * \param channelSel [out]: Pointer to store channel selection of the stream. Must not be NULL.
  *
  * \return Returns \ref SPI_REQUEST_OK if the stream is connected to the request. Otherwise
  *         returns \ref SPI_REQUEST_ERROR.
  */
-static spi_RequestState_t Spi_Dma_Get_Stream( spi_PeriphId_t periphId, spi_DmaDir_t dmaDir, spi_DmaPeriphId_t dmaId, spi_DmaChannelId_t streamId, dma_PeriphReqId_t * const channelSel )
+static spi_RequestState_t Spi_Dma_Get_Stream( spi_PeriphId_t periphId, spi_DmaDir_t dmaDir, spi_DmaCode_t dmaCode, dma_PeriphReqId_t * const channelSel )
 {
-    spi_RequestState_t retState = SPI_REQUEST_ERROR;
+    spi_RequestState_t retState   = SPI_REQUEST_ERROR;
+    const uint32_t     codePeriph = SPI_DMA_BIT_MASK_DECODE_PERIPH( dmaCode );
+    const uint32_t     codeDmaId  = SPI_DMA_BIT_MASK_DECODE_DMA( dmaCode );
+    const uint32_t     codeStream = SPI_DMA_BIT_MASK_DECODE_STREAM( dmaCode );
 
-    if( ( SPI_PERIPH_CNT      > periphId   ) &&
-        ( SPI_DMA_DIR_CNT     > dmaDir     ) &&
-        ( SPI_DMA_PERIPH_CNT  > dmaId      ) &&
-        ( SPI_DMA_CHANNEL_CNT > streamId   ) &&
-        ( SPI_NULL_PTR       != channelSel )    )
+    if( ( SPI_PERIPH_CNT  >  periphId           ) &&
+        ( SPI_DMA_DIR_CNT >  dmaDir             ) &&
+        ( codePeriph      == (uint32_t)periphId ) &&
+        ( SPI_NULL_PTR    != channelSel         )    )
     {
         const spi_DmaStream_t * const streams = ( SPI_DMA_DIR_TX == dmaDir ) ? spi_DmaPeriphConfig[ periphId ].TxStream
                                                                             : spi_DmaPeriphConfig[ periphId ].RxStream;
 
         for( uint32_t streamIdx = 0u; SPI_DMA_STREAM_OPTIONS > streamIdx; streamIdx ++ )
         {
-            if( ( (dma_PeriphId_t)dmaId     == streams[ streamIdx ].DmaId    ) &&
-                ( (dma_ChannelId_t)streamId == streams[ streamIdx ].StreamId )    )
+            if( ( (dma_PeriphId_t)codeDmaId   == streams[ streamIdx ].DmaId    ) &&
+                ( (dma_ChannelId_t)codeStream == streams[ streamIdx ].StreamId )    )
             {
                 *channelSel = streams[ streamIdx ].ChannelSel;
                 retState    = SPI_REQUEST_OK;
@@ -619,26 +660,24 @@ static spi_RequestState_t Spi_Dma_Set_ChannelInit( spi_PeriphId_t periphId, spi_
         spi_DmaChannelState_t * const       chState    = &spi_DmaChannelState[ periphId ][ dmaDir ];
         dma_ConfigStruct_t                  dmaConfig;
         dma_RequestState_t                  dmaState   = DMA_REQUEST_ERROR;
-        spi_DmaPeriphId_t                   dmaId      = xferCtx->Config.TxDmaPeriphId;
-        spi_DmaChannelId_t                  streamId   = xferCtx->Config.TxDmaChannelId;
+        spi_DmaCode_t                       dmaCode    = (spi_DmaCode_t)xferCtx->Config.TxDma;
         spi_DmaPriority_t                   dmaPrio    = xferCtx->Config.TxDmaPriority;
 
         if( SPI_DMA_DIR_RX == dmaDir )
         {
-            dmaId    = xferCtx->Config.RxDmaPeriphId;
-            streamId = xferCtx->Config.RxDmaChannelId;
-            dmaPrio  = xferCtx->Config.RxDmaPriority;
+            dmaCode = (spi_DmaCode_t)xferCtx->Config.RxDma;
+            dmaPrio = xferCtx->Config.RxDmaPriority;
         }
         else
         {
             /* Transmit stream */
         }
 
-        retState = Spi_Dma_Get_Stream( periphId, dmaDir, dmaId, streamId, &channelSel );
+        retState = Spi_Dma_Get_Stream( periphId, dmaDir, dmaCode, &channelSel );
         dmaState = Dma_Get_DefaultConfig( &dmaConfig );
 
-        dmaConfig.DmaPeriphId         = (dma_PeriphId_t)dmaId;
-        dmaConfig.DmaChannel          = (dma_ChannelId_t)streamId;
+        dmaConfig.DmaPeriphId         = (dma_PeriphId_t)SPI_DMA_BIT_MASK_DECODE_DMA( dmaCode );
+        dmaConfig.DmaChannel          = (dma_ChannelId_t)SPI_DMA_BIT_MASK_DECODE_STREAM( dmaCode );
         dmaConfig.PeripheralReqId     = channelSel;
         dmaConfig.TransferMode        = DMA_TRANSFER_MODE_NORMAL;
         dmaConfig.PeriphAddress       = (dma_PeriphAddr_t)LL_SPI_DMA_GetRegAddr( periphReg );

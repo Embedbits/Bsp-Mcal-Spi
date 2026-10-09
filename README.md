@@ -32,16 +32,18 @@ Not supported on STM32F4 (refused): data size other than 8 / 16 bits, active hig
 | SPI1, SPI4 - SPI6 | PCLK2 (APB2)               | 8 / 16-bit | equal to data size | 65535                   |
 | SPI2, SPI3        | PCLK1 (APB1)               | 8 / 16-bit | equal to data size | 65535                   |
 
-DMA streams (`TxDmaChannelId` / `RxDmaChannelId` select the stream, channel selection is set by the module):
+DMA streams: `TxDma` / `RxDma` select the stream from the lists `spi_TxDma_t` / `spi_RxDma_t` - one item per SPI peripheral, DMA peripheral and stream, named `SPI_TX_DMA_SPIx_DMAy_STREAMz` / `SPI_RX_DMA_SPIx_DMAy_STREAMz` (e.g. `SPI_TX_DMA_SPI1_DMA2_STREAM3`); the channel selection of the stream is part of the item. Items of another SPI peripheral, items of the other direction and `SPI_TX_DMA_UNUSED` / `SPI_RX_DMA_UNUSED` are refused in the DMA mode, items of peripherals missing on the device line are not defined:
 
 | Peripheral | Transmission                       | Reception                          |
 |------------|------------------------------------|------------------------------------|
-| SPI1       | DMA2 stream 3 or 5                 | DMA2 stream 0 or 2                 |
+| SPI1       | DMA2 stream 3 or 5 (stream 2 *)    | DMA2 stream 0 or 2                 |
 | SPI2       | DMA1 stream 4                      | DMA1 stream 3                      |
 | SPI3       | DMA1 stream 5 or 7                 | DMA1 stream 0 or 2                 |
-| SPI4       | DMA2 stream 1 or 4                 | DMA2 stream 0 or 3                 |
-| SPI5       | DMA2 stream 4 or 6                 | DMA2 stream 3 or 5                 |
+| SPI4       | DMA2 stream 1 or 4                 | DMA2 stream 0 or 3 (stream 4 *)    |
+| SPI5       | DMA2 stream 4 or 6 (stream 5 *)    | DMA2 stream 3 or 5                 |
 | SPI6       | DMA2 stream 5                      | DMA2 stream 6                      |
+
+(*) third stream of the request, available on STM32F410 / F411 / F412 / F413 / F423 only (SPI1_TX stream 2 on all of them, SPI4_RX stream 4 on STM32F411 / F412 / F413 / F423, SPI5_TX stream 5 on STM32F410C / F410R / F411 / F412 / F413 / F423).
 
 ---
 
@@ -119,7 +121,7 @@ STM32F4 SPI has no transfer counter and no end of transfer flag - the module cou
 
 ## GPIO Configuration
 
-Pins are given in `spi_Config_t` (`SckPin`, `MisoPin`, `MosiPin`, `NssPin`) and configured by `Spi_Init()` as push-pull alternate function with `PinSpeed`. SCK gets pull-down (CPOL = 0) or pull-up (CPOL = 1) so the line keeps its idle level while the peripheral is disabled between transfers (`Spi_Set_ClockMode()` updates the pull), NSS gets pull-up. The pin is encoded by `SPI_PIN_ENCODE( periph, port, pin, alternate function )` - the alternate function number has to be taken from the device datasheet. The pin must belong to `PeriphId`, otherwise `Spi_Init()` returns error. Use `SPI_PIN_UNUSED` for signals not configured by the module (e.g. MISO in simplex TX, NSS with software NSS).
+Pins are given in `spi_Config_t` (`SckPin`, `MisoPin`, `MosiPin`, `NssPin`) and configured by `Spi_Init()` as push-pull alternate function with `PinSpeed`. SCK gets pull-down (CPOL = 0) or pull-up (CPOL = 1) so the line keeps its idle level while the peripheral is disabled between transfers (`Spi_Set_ClockMode()` updates the pull), NSS gets pull-up. The pins are selected from the pin tables `spi_SckPin_t` / `spi_MisoPin_t` / `spi_MosiPin_t` / `spi_NssPin_t` (e.g. `SPI_SCK_PIN_SPI1_PA5`, `SPI_MISO_PIN_SPI1_PA6`, `SPI_NSS_PIN_SPI1_PA4`) - only pins available on the selected device line are defined. The pin tables were generated from the STM32CubeMX database, the alternate function of the item is part of its value. A pin missing in the tables can be encoded by `SPI_PIN_ENCODE( periph, port, pin, alternate function )` (alternate function number from the device datasheet). The pin must belong to `PeriphId`, otherwise `Spi_Init()` returns error. Use the `SPI_*_PIN_UNUSED` item of the table (equal to `SPI_PIN_UNUSED`) for signals not configured by the module (e.g. MISO in simplex TX, NSS with software NSS).
 
 ---
 
@@ -129,11 +131,9 @@ Pins are given in `spi_Config_t` (`SckPin`, `MisoPin`, `MosiPin`, `NssPin`) and 
 static const spi_DataConfig_t spiData =
 {
     .XferMode             = SPI_XFER_MODE_DMA,
-    .TxDmaPeriphId        = SPI_DMA_PERIPH_2,
-    .TxDmaChannelId       = SPI_DMA_CHANNEL_3,   /* DMA2 stream 3 - SPI1_TX */
+    .TxDma                = SPI_TX_DMA_SPI1_DMA2_STREAM3,   /* DMA2 stream 3 - SPI1_TX */
     .TxDmaPriority        = SPI_DMA_PRIORITY_LOW,
-    .RxDmaPeriphId        = SPI_DMA_PERIPH_2,
-    .RxDmaChannelId       = SPI_DMA_CHANNEL_0,   /* DMA2 stream 0 - SPI1_RX */
+    .RxDma                = SPI_RX_DMA_SPI1_DMA2_STREAM0,   /* DMA2 stream 0 - SPI1_RX */
     .RxDmaPriority        = SPI_DMA_PRIORITY_HIGH,
     .IrqPriority          = 5u,
     .XferCompleteCallback = App_SpiDone,
@@ -147,9 +147,9 @@ spi_Config_t spiConfig;
 spiConfig.PeriphId   = SPI_PERIPH_1;
 spiConfig.BusFreq    = 8000000u;
 spiConfig.DataConfig = &spiData;
-spiConfig.SckPin     = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 );
-spiConfig.MisoPin    = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_6, GPIO_ALT_FUNC_5 );
-spiConfig.MosiPin    = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 );
+spiConfig.SckPin     = SPI_SCK_PIN_SPI1_PA5;
+spiConfig.MisoPin    = SPI_MISO_PIN_SPI1_PA6;
+spiConfig.MosiPin    = SPI_MOSI_PIN_SPI1_PA7;
 
 (void)Spi_Init( &spiConfig );
 

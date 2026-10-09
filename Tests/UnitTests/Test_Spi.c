@@ -26,6 +26,7 @@
 #include "MockNvic_Port.h"                  /* NVIC module mock               */
 #include "MockGpio_Port.h"                  /* GPIO module mock               */
 #include "MockDma_Port.h"                   /* DMA module mock                */
+#include "Spi_Dma.h"                        /* DMA handler (configuration check) */
 #include "Stm32_spi.h"                      /* SPI registers definition       */
 /* ============================= TYPEDEFS =================================== */
 
@@ -97,11 +98,23 @@ static void                 Ut_Spi_ErrorCallback        ( spi_XferErrorId_t erro
 
 /* ============================== MACROS ==================================== */
 
-/** SCK, MISO, MOSI, NSS pins of SPI1 (PA5, PA6, PA7, PA4, AF5) */
-#define UT_SPI_SCK_PIN      SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 )
-#define UT_SPI_MISO_PIN     SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_6, GPIO_ALT_FUNC_5 )
-#define UT_SPI_MOSI_PIN     SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 )
-#define UT_SPI_NSS_PIN      SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_4, GPIO_ALT_FUNC_5 )
+/** SCK, MISO, MOSI, NSS pins of SPI1 (PA5, PA6, PA7, PA4, AF5), pins missing on some devices of the family are test vectors coded by SPI_PIN_ENCODE */
+#define UT_SPI_SCK_PIN      ( SPI_SCK_PIN_SPI1_PA5 )
+#define UT_SPI_MISO_PIN     ( (spi_MisoPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_6, GPIO_ALT_FUNC_5 ) )
+#define UT_SPI_MOSI_PIN     ( (spi_MosiPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 ) )
+#define UT_SPI_NSS_PIN      ( (spi_NssPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_4, GPIO_ALT_FUNC_5 ) )
+
+/** Encoded pin from the peripheral index, port index, pin number and alternate function number
+ *  (bit-fields written independently of SPI_PIN_ENCODE) */
+#define UT_SPI_PIN_CODE( PERIPH, PORT, PIN, AF )    ( ( (PERIPH) << 15u ) | ( (PORT) << 10u ) | ( (PIN) << 5u ) | (AF) )
+
+/** Transmit and receive DMA stream of SPI1 used by tests (DMA2 stream 3 / stream 0, channel selection 3) */
+#define UT_SPI_TX_DMA       ( SPI_TX_DMA_SPI1_DMA2_STREAM3 )
+#define UT_SPI_RX_DMA       ( SPI_RX_DMA_SPI1_DMA2_STREAM0 )
+
+/** Encoded DMA stream from the peripheral index, DMA peripheral index, stream number and channel selection
+ *  number (bit-fields written independently of SPI_DMA_ENCODE) */
+#define UT_SPI_DMA_CODE( PERIPH, DMA, STREAM, CHSEL )   ( ( (PERIPH) << 15u ) | ( (DMA) << 10u ) | ( (STREAM) << 5u ) | (CHSEL) )
 
 /* ========================== LOCAL VARIABLES =============================== */
 
@@ -210,11 +223,166 @@ void Ut_Spi_Get_DefaultConfig_FillsDefaults( void )
     TEST_ASSERT_EQUAL( SPI_NSS_POLARITY_LOW,      config.NssConfig.Polarity );
     TEST_ASSERT_EQUAL( SPI_FUNCTION_INACTIVE,     config.NssConfig.Pulse );
     TEST_ASSERT_NULL( config.DataConfig );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED,      config.SckPin );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED,      config.MisoPin );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED,      config.MosiPin );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED,      config.NssPin );
+    TEST_ASSERT_EQUAL( SPI_SCK_PIN_UNUSED,        config.SckPin );
+    TEST_ASSERT_EQUAL( SPI_MISO_PIN_UNUSED,       config.MisoPin );
+    TEST_ASSERT_EQUAL( SPI_MOSI_PIN_UNUSED,       config.MosiPin );
+    TEST_ASSERT_EQUAL( SPI_NSS_PIN_UNUSED,        config.NssPin );
     TEST_ASSERT_EQUAL( SPI_PIN_SPEED_HIGH,        config.PinSpeed );
+}
+
+
+/**
+ * \brief   Items of the pin tables carry peripheral, port, pin and alternate function of the pin.
+ *
+ * \details Expected values are written as (peripheral index, port index, pin number, alternate
+ *          function number) of the datasheet alternate function mapping, independently of the
+ *          encoding macro.
+ *
+ * \par Expected results
+ * - SCK / MISO / MOSI / NSS items of every SPI peripheral carry the expected bit-fields.
+ * - Unused items of the four tables equal SPI_PIN_UNUSED.
+ */
+void Ut_Spi_PinTables_Items_EncodePeriphPortPinAndAf( void )
+{
+    /* SPI1 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 0u, 5u, 5u ), SPI_SCK_PIN_SPI1_PA5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 1u, 4u, 5u ), SPI_MISO_PIN_SPI1_PB4 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 1u, 5u, 5u ), SPI_MOSI_PIN_SPI1_PB5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 0u, 15u, 5u ), SPI_NSS_PIN_SPI1_PA15 );
+
+#if defined(SPI2)
+    /* SPI2 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 13u, 5u ), SPI_SCK_PIN_SPI2_PB13 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 14u, 5u ), SPI_MISO_PIN_SPI2_PB14 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 15u, 5u ), SPI_MOSI_PIN_SPI2_PB15 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 12u, 5u ), SPI_NSS_PIN_SPI2_PB12 );
+#endif /* SPI2 */
+
+#if defined(SPI3)
+    /* SPI3 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 1u, 3u, 6u ), SPI_SCK_PIN_SPI3_PB3 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 1u, 4u, 6u ), SPI_MISO_PIN_SPI3_PB4 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 1u, 5u, 6u ), SPI_MOSI_PIN_SPI3_PB5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 0u, 15u, 6u ), SPI_NSS_PIN_SPI3_PA15 );
+#endif /* SPI3 */
+
+#if defined(SPI6)
+    /* SPI6 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 6u, 13u, 5u ), SPI_SCK_PIN_SPI6_PG13 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 6u, 12u, 5u ), SPI_MISO_PIN_SPI6_PG12 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 6u, 14u, 5u ), SPI_MOSI_PIN_SPI6_PG14 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 6u, 8u, 5u ), SPI_NSS_PIN_SPI6_PG8 );
+#endif /* SPI6 */
+
+    /* Unused pin */
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_SCK_PIN_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_MISO_PIN_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_MOSI_PIN_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_NSS_PIN_UNUSED );
+}
+
+
+/**
+ * \brief   Items of the DMA stream lists carry SPI peripheral, DMA peripheral, stream and channel
+ *          selection of the stream.
+ *
+ * \details Expected values are written as (SPI peripheral, DMA peripheral index, stream number,
+ *          channel selection number) taken from the DMA request mapping of the STM32F4 reference
+ *          manuals, independently of the encoding macro.
+ *
+ * \par Expected results
+ * - Every transmit and receive item of the SPI peripherals of the MCU carries the expected
+ *   bit-fields.
+ * - Unused items of both lists equal SPI_DMA_CODE_UNUSED, the decoding macros return the fields.
+ */
+void Ut_Spi_DmaLists_Items_EncodePeriphDmaStreamAndChannelSelection( void )
+{
+    /* SPI1 (DMA2, channel selection 3) */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_1, 1u, 3u, 3u ), SPI_TX_DMA_SPI1_DMA2_STREAM3 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_1, 1u, 5u, 3u ), SPI_TX_DMA_SPI1_DMA2_STREAM5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_1, 1u, 0u, 3u ), SPI_RX_DMA_SPI1_DMA2_STREAM0 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_1, 1u, 2u, 3u ), SPI_RX_DMA_SPI1_DMA2_STREAM2 );
+#if defined(STM32F410Cx) || \
+    defined(STM32F410Rx) || \
+    defined(STM32F410Tx) || \
+    defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_1, 1u, 2u, 2u ), SPI_TX_DMA_SPI1_DMA2_STREAM2 );
+#endif
+
+#if defined(SPI2)
+    /* SPI2 (DMA1, channel selection 0) */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_2, 0u, 4u, 0u ), SPI_TX_DMA_SPI2_DMA1_STREAM4 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_2, 0u, 3u, 0u ), SPI_RX_DMA_SPI2_DMA1_STREAM3 );
+#endif /* SPI2 */
+
+#if defined(SPI3)
+    /* SPI3 (DMA1, channel selection 0) */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_3, 0u, 5u, 0u ), SPI_TX_DMA_SPI3_DMA1_STREAM5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_3, 0u, 7u, 0u ), SPI_TX_DMA_SPI3_DMA1_STREAM7 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_3, 0u, 0u, 0u ), SPI_RX_DMA_SPI3_DMA1_STREAM0 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_3, 0u, 2u, 0u ), SPI_RX_DMA_SPI3_DMA1_STREAM2 );
+#endif /* SPI3 */
+
+#if defined(SPI4)
+    /* SPI4 (DMA2, channel selection 4 / 5) */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_4, 1u, 1u, 4u ), SPI_TX_DMA_SPI4_DMA2_STREAM1 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_4, 1u, 4u, 5u ), SPI_TX_DMA_SPI4_DMA2_STREAM4 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_4, 1u, 0u, 4u ), SPI_RX_DMA_SPI4_DMA2_STREAM0 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_4, 1u, 3u, 5u ), SPI_RX_DMA_SPI4_DMA2_STREAM3 );
+#if defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_4, 1u, 4u, 4u ), SPI_RX_DMA_SPI4_DMA2_STREAM4 );
+#endif
+#endif /* SPI4 */
+
+#if defined(SPI5)
+    /* SPI5 (DMA2, channel selection 2 / 7) */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_5, 1u, 4u, 2u ), SPI_TX_DMA_SPI5_DMA2_STREAM4 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_5, 1u, 6u, 7u ), SPI_TX_DMA_SPI5_DMA2_STREAM6 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_5, 1u, 3u, 2u ), SPI_RX_DMA_SPI5_DMA2_STREAM3 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_5, 1u, 5u, 7u ), SPI_RX_DMA_SPI5_DMA2_STREAM5 );
+#if defined(STM32F410Cx) || \
+    defined(STM32F410Rx) || \
+    defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_5, 1u, 5u, 5u ), SPI_TX_DMA_SPI5_DMA2_STREAM5 );
+#endif
+#endif /* SPI5 */
+
+#if defined(SPI6)
+    /* SPI6 (DMA2, channel selection 1) */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_6, 1u, 5u, 1u ), SPI_TX_DMA_SPI6_DMA2_STREAM5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_DMA_CODE( SPI_PERIPH_6, 1u, 6u, 1u ), SPI_RX_DMA_SPI6_DMA2_STREAM6 );
+#endif /* SPI6 */
+
+    /* Decoding of the fields */
+    TEST_ASSERT_EQUAL_UINT32( SPI_PERIPH_1,       SPI_DMA_BIT_MASK_DECODE_PERIPH( SPI_RX_DMA_SPI1_DMA2_STREAM2 ) );
+    TEST_ASSERT_EQUAL_UINT32( SPI_DMA_PERIPH_2,   SPI_DMA_BIT_MASK_DECODE_DMA( SPI_RX_DMA_SPI1_DMA2_STREAM2 ) );
+    TEST_ASSERT_EQUAL_UINT32( SPI_DMA_CHANNEL_2,  SPI_DMA_BIT_MASK_DECODE_STREAM( SPI_RX_DMA_SPI1_DMA2_STREAM2 ) );
+    TEST_ASSERT_EQUAL_UINT32( 3u,                 SPI_DMA_BIT_MASK_DECODE_CHSEL( SPI_RX_DMA_SPI1_DMA2_STREAM2 ) );
+
+    /* Unused stream */
+    TEST_ASSERT_EQUAL_HEX32( SPI_DMA_CODE_UNUSED, SPI_TX_DMA_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_DMA_CODE_UNUSED, SPI_RX_DMA_UNUSED );
+    TEST_ASSERT_EQUAL_UINT32( SPI_PERIPH_CNT,      SPI_DMA_BIT_MASK_DECODE_PERIPH( SPI_TX_DMA_UNUSED ) );
+    TEST_ASSERT_EQUAL_UINT32( SPI_DMA_PERIPH_CNT,  SPI_DMA_BIT_MASK_DECODE_DMA( SPI_TX_DMA_UNUSED ) );
+    TEST_ASSERT_EQUAL_UINT32( SPI_DMA_CHANNEL_CNT, SPI_DMA_BIT_MASK_DECODE_STREAM( SPI_TX_DMA_UNUSED ) );
 }
 
 /* ============================ INITIALIZATION ============================== */
@@ -224,8 +392,9 @@ void Ut_Spi_Get_DefaultConfig_FillsDefaults( void )
  *
  * \par Expected results
  * - SPI_REQUEST_ERROR for null pointer, invalid peripheral / clock source, data size
- *   other than 8 / 16 bits, active high NSS, NSS pulse, pin of other peripheral and
- *   master without bus frequency. No RCC access.
+ *   other than 8 / 16 bits, active high NSS, NSS pulse, SCK / MISO / MOSI / NSS pin of
+ *   other peripheral, pin with port / pin / alternate function out of range and master
+ *   without bus frequency. No RCC access.
  */
 void Ut_Spi_Init_InvalidConfig_Error( void )
 {
@@ -258,7 +427,31 @@ void Ut_Spi_Init_InvalidConfig_Error( void )
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
 
     config        = Ut_Spi_Get_Config();
-    config.SckPin = SPI_PIN_ENCODE( SPI_PERIPH_2, GPIO_PORT_B, GPIO_PIN_ID_13, GPIO_ALT_FUNC_5 );
+    config.SckPin = (spi_SckPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1 + 1u, GPIO_PORT_B, GPIO_PIN_ID_13, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+
+    config         = Ut_Spi_Get_Config();
+    config.MisoPin = (spi_MisoPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1 + 1u, GPIO_PORT_B, GPIO_PIN_ID_14, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+
+    config         = Ut_Spi_Get_Config();
+    config.MosiPin = (spi_MosiPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1 + 1u, GPIO_PORT_B, GPIO_PIN_ID_15, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+
+    config        = Ut_Spi_Get_Config();
+    config.NssPin = (spi_NssPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1 + 1u, GPIO_PORT_B, GPIO_PIN_ID_12, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+
+    config        = Ut_Spi_Get_Config();
+    config.SckPin = (spi_SckPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_CNT, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+
+    config         = Ut_Spi_Get_Config();
+    config.MisoPin = (spi_MisoPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_CNT, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+
+    config         = Ut_Spi_Get_Config();
+    config.MosiPin = (spi_MosiPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_CNT );
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
 
     config         = Ut_Spi_Get_Config();
@@ -951,11 +1144,14 @@ void Ut_Spi_Set_DataConfig_Isr_InterruptEnabled( void )
 
 
 /**
- * \brief   DMA data handling refuses streams not connected to the SPI requests.
+ * \brief   DMA data handling refuses streams out of the DMA stream lists and invalid priorities.
  *
  * \par Expected results
- * - SPI_REQUEST_ERROR for transmit stream of other peripheral, receive stream equal to the
- *   transmit stream, other DMA peripheral and invalid priority. No DMA access.
+ * - SPI_REQUEST_ERROR for unused streams, streams of the other direction (SPI1 receive stream in
+ *   the transmit member and the other way), the SPI2 stream items, streams connected to no SPI1
+ *   request (DMA2 stream 7), DMA peripheral and stream out of range and invalid priority of both
+ *   directions. No DMA access.
+ * - Second streams of the SPI1 requests (DMA2 stream 5 / stream 2) are accepted.
  */
 void Ut_Spi_Set_DataConfig_DmaInvalidStream_Error( void )
 {
@@ -963,20 +1159,59 @@ void Ut_Spi_Set_DataConfig_DmaInvalidStream_Error( void )
 
     Ut_Spi_Init_Master( NULL );
 
-    dataConfig.TxDmaChannelId = SPI_DMA_CHANNEL_4;
+    dataConfig.TxDma = SPI_TX_DMA_UNUSED;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
 
-    dataConfig                = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
-    dataConfig.RxDmaChannelId = SPI_DMA_CHANNEL_3;
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.RxDma = SPI_RX_DMA_UNUSED;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
 
-    dataConfig               = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
-    dataConfig.RxDmaPeriphId = SPI_DMA_PERIPH_1;
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.TxDma = (spi_TxDma_t)SPI_RX_DMA_SPI1_DMA2_STREAM0;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.RxDma = (spi_RxDma_t)SPI_TX_DMA_SPI1_DMA2_STREAM3;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+#if defined(SPI2)
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.TxDma = SPI_TX_DMA_SPI2_DMA1_STREAM4;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.RxDma = SPI_RX_DMA_SPI2_DMA1_STREAM3;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+#endif /* SPI2 */
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.TxDma = (spi_TxDma_t)SPI_DMA_ENCODE( SPI_PERIPH_1, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_7, 3u );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.RxDma = (spi_RxDma_t)SPI_DMA_ENCODE( SPI_PERIPH_1, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_CNT, 3u );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.RxDma = (spi_RxDma_t)SPI_DMA_ENCODE( SPI_PERIPH_1, SPI_DMA_PERIPH_CNT, SPI_DMA_CHANNEL_0, 3u );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.TxDma = (spi_TxDma_t)SPI_DMA_ENCODE( SPI_PERIPH_CNT, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_3, 3u );
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
 
     dataConfig               = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
     dataConfig.TxDmaPriority = (spi_DmaPriority_t)DMA_PRIORITY_CNT;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig               = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.RxDmaPriority = (spi_DmaPriority_t)DMA_PRIORITY_CNT;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Set_DataConfig( UT_SPI_BUS, &dataConfig ) );
+
+    dataConfig       = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+    dataConfig.TxDma = SPI_TX_DMA_SPI1_DMA2_STREAM5;
+    dataConfig.RxDma = SPI_RX_DMA_SPI1_DMA2_STREAM2;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Dma_Check_Config( UT_SPI_BUS, &dataConfig ) );
 }
 
 
@@ -2136,12 +2371,14 @@ void Ut_Spi_Isr_Deinit_RunningTransferAborted( void )
 /**
  * \brief   Other SPI peripherals use their own SPI interrupt and DMA callbacks.
  *
- * \details Every SPI peripheral of the MCU except SPI1 in DMA mode (first streams of the
- *          request map). Captured SPI interrupt without transfer, then a 2 frame reception is
- *          started and DMA callbacks of the peripheral are called (RX error, TX error, TX /
- *          RX done). MCUs with SPI1 only: test ignored.
+ * \details Every item of the DMA stream lists of every SPI peripheral of the MCU in DMA mode,
+ *          items paired by the SPI peripheral. Captured SPI interrupt without transfer, then a
+ *          2 frame reception is started and DMA callbacks of the peripheral are called (RX
+ *          error, TX error, TX / RX done).
  *
  * \par Expected results
+ * - Streams of the list items are accepted and configured with the channel selections of the
+ *   request map, channel selection stored in the items equals the request map.
  * - SPI interrupt without transfer: no callback.
  * - RX error of running transfer: one error callback SPI_XFER_ERROR_DMA_TRANSFER; TX error,
  *   TX / RX done without transfer: no further callback.
@@ -2149,30 +2386,70 @@ void Ut_Spi_Isr_Deinit_RunningTransferAborted( void )
  */
 void Ut_Spi_Dma_OtherPeriphCallbacks_OwnPeripheralReported( void )
 {
-#if defined(SPI2) || defined(SPI3) || defined(SPI4) || defined(SPI5) || defined(SPI6)
     const struct
     {
         spi_PeriphId_t       PeriphId;
         SPI_TypeDef *        PeriphReg;
+        spi_TxDma_t          TxDma;
+        spi_RxDma_t          RxDma;
         spi_DmaPeriphId_t    DmaId;
         spi_DmaChannelId_t   TxStream;
         spi_DmaChannelId_t   RxStream;
+        dma_PeriphReqId_t    TxRequest;
+        dma_PeriphReqId_t    RxRequest;
     }   periphLut[] =
     {
+        { SPI_PERIPH_1, SPI1, SPI_TX_DMA_SPI1_DMA2_STREAM3, SPI_RX_DMA_SPI1_DMA2_STREAM0, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_3, SPI_DMA_CHANNEL_0, DMA_REQ_CHANNEL_3, DMA_REQ_CHANNEL_3 },
+        { SPI_PERIPH_1, SPI1, SPI_TX_DMA_SPI1_DMA2_STREAM5, SPI_RX_DMA_SPI1_DMA2_STREAM2, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_5, SPI_DMA_CHANNEL_2, DMA_REQ_CHANNEL_3, DMA_REQ_CHANNEL_3 },
+#if defined(STM32F410Cx) || \
+    defined(STM32F410Rx) || \
+    defined(STM32F410Tx) || \
+    defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+        { SPI_PERIPH_1, SPI1, SPI_TX_DMA_SPI1_DMA2_STREAM2, SPI_RX_DMA_SPI1_DMA2_STREAM0, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_2, SPI_DMA_CHANNEL_0, DMA_REQ_CHANNEL_2, DMA_REQ_CHANNEL_3 },
+#endif
 #ifdef SPI2
-        { SPI_PERIPH_2, SPI2, SPI_DMA_PERIPH_1, SPI_DMA_CHANNEL_4, SPI_DMA_CHANNEL_3 },
+        { SPI_PERIPH_2, SPI2, SPI_TX_DMA_SPI2_DMA1_STREAM4, SPI_RX_DMA_SPI2_DMA1_STREAM3, SPI_DMA_PERIPH_1, SPI_DMA_CHANNEL_4, SPI_DMA_CHANNEL_3, DMA_REQ_CHANNEL_0, DMA_REQ_CHANNEL_0 },
 #endif /* SPI2 */
 #ifdef SPI3
-        { SPI_PERIPH_3, SPI3, SPI_DMA_PERIPH_1, SPI_DMA_CHANNEL_5, SPI_DMA_CHANNEL_0 },
+        { SPI_PERIPH_3, SPI3, SPI_TX_DMA_SPI3_DMA1_STREAM5, SPI_RX_DMA_SPI3_DMA1_STREAM0, SPI_DMA_PERIPH_1, SPI_DMA_CHANNEL_5, SPI_DMA_CHANNEL_0, DMA_REQ_CHANNEL_0, DMA_REQ_CHANNEL_0 },
+        { SPI_PERIPH_3, SPI3, SPI_TX_DMA_SPI3_DMA1_STREAM7, SPI_RX_DMA_SPI3_DMA1_STREAM2, SPI_DMA_PERIPH_1, SPI_DMA_CHANNEL_7, SPI_DMA_CHANNEL_2, DMA_REQ_CHANNEL_0, DMA_REQ_CHANNEL_0 },
 #endif /* SPI3 */
 #ifdef SPI4
-        { SPI_PERIPH_4, SPI4, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_1, SPI_DMA_CHANNEL_0 },
+        { SPI_PERIPH_4, SPI4, SPI_TX_DMA_SPI4_DMA2_STREAM1, SPI_RX_DMA_SPI4_DMA2_STREAM0, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_1, SPI_DMA_CHANNEL_0, DMA_REQ_CHANNEL_4, DMA_REQ_CHANNEL_4 },
+        { SPI_PERIPH_4, SPI4, SPI_TX_DMA_SPI4_DMA2_STREAM4, SPI_RX_DMA_SPI4_DMA2_STREAM3, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_4, SPI_DMA_CHANNEL_3, DMA_REQ_CHANNEL_5, DMA_REQ_CHANNEL_5 },
+#if defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+        { SPI_PERIPH_4, SPI4, SPI_TX_DMA_SPI4_DMA2_STREAM1, SPI_RX_DMA_SPI4_DMA2_STREAM4, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_1, SPI_DMA_CHANNEL_4, DMA_REQ_CHANNEL_4, DMA_REQ_CHANNEL_4 },
+#endif
 #endif /* SPI4 */
 #ifdef SPI5
-        { SPI_PERIPH_5, SPI5, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_4, SPI_DMA_CHANNEL_3 },
+        { SPI_PERIPH_5, SPI5, SPI_TX_DMA_SPI5_DMA2_STREAM4, SPI_RX_DMA_SPI5_DMA2_STREAM3, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_4, SPI_DMA_CHANNEL_3, DMA_REQ_CHANNEL_2, DMA_REQ_CHANNEL_2 },
+        { SPI_PERIPH_5, SPI5, SPI_TX_DMA_SPI5_DMA2_STREAM6, SPI_RX_DMA_SPI5_DMA2_STREAM5, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_6, SPI_DMA_CHANNEL_5, DMA_REQ_CHANNEL_7, DMA_REQ_CHANNEL_7 },
+#if defined(STM32F410Cx) || \
+    defined(STM32F410Rx) || \
+    defined(STM32F412Cx) || \
+    defined(STM32F412Rx) || \
+    defined(STM32F412Vx) || \
+    defined(STM32F412Zx) || \
+    defined(STM32F411xE) || \
+    defined(STM32F413xx) || \
+    defined(STM32F423xx)
+        { SPI_PERIPH_5, SPI5, SPI_TX_DMA_SPI5_DMA2_STREAM5, SPI_RX_DMA_SPI5_DMA2_STREAM3, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_5, SPI_DMA_CHANNEL_3, DMA_REQ_CHANNEL_5, DMA_REQ_CHANNEL_2 },
+#endif
 #endif /* SPI5 */
 #ifdef SPI6
-        { SPI_PERIPH_6, SPI6, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_5, SPI_DMA_CHANNEL_6 },
+        { SPI_PERIPH_6, SPI6, SPI_TX_DMA_SPI6_DMA2_STREAM5, SPI_RX_DMA_SPI6_DMA2_STREAM6, SPI_DMA_PERIPH_2, SPI_DMA_CHANNEL_5, SPI_DMA_CHANNEL_6, DMA_REQ_CHANNEL_1, DMA_REQ_CHANNEL_1 },
 #endif /* SPI6 */
     };
     uint8_t                 rxBuf[ 2u ] = { 0u };
@@ -2183,12 +2460,10 @@ void Ut_Spi_Dma_OtherPeriphCallbacks_OwnPeripheralReported( void )
         spi_DataConfig_t dataConfig = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
         spi_Config_t     config     = Ut_Spi_Get_Config();
 
-        dataConfig.TxDmaPeriphId  = periphLut[ idx ].DmaId;
-        dataConfig.TxDmaChannelId = periphLut[ idx ].TxStream;
-        dataConfig.RxDmaPeriphId  = periphLut[ idx ].DmaId;
-        dataConfig.RxDmaChannelId = periphLut[ idx ].RxStream;
-        config.PeriphId           = periphLut[ idx ].PeriphId;
-        config.DataConfig         = &dataConfig;
+        dataConfig.TxDma  = periphLut[ idx ].TxDma;
+        dataConfig.RxDma  = periphLut[ idx ].RxDma;
+        config.PeriphId   = periphLut[ idx ].PeriphId;
+        config.DataConfig = &dataConfig;
 
         Ut_Spi_Ignore_PeriphMocks();
         utSpi_Isr         = NULL;
@@ -2198,7 +2473,17 @@ void Ut_Spi_Dma_OtherPeriphCallbacks_OwnPeripheralReported( void )
 
         TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Init( &config ) );
         TEST_ASSERT_EQUAL_UINT32( 2u, utSpi_DmaInitCnt );
+        TEST_ASSERT_EQUAL( (dma_PeriphId_t)periphLut[ idx ].DmaId,     utSpi_DmaConfig[ 0u ].DmaPeriphId );
+        TEST_ASSERT_EQUAL( (dma_PeriphId_t)periphLut[ idx ].DmaId,     utSpi_DmaConfig[ 1u ].DmaPeriphId );
+        TEST_ASSERT_EQUAL( (dma_ChannelId_t)periphLut[ idx ].TxStream, utSpi_DmaConfig[ 0u ].DmaChannel );
+        TEST_ASSERT_EQUAL( (dma_ChannelId_t)periphLut[ idx ].RxStream, utSpi_DmaConfig[ 1u ].DmaChannel );
+        TEST_ASSERT_EQUAL( periphLut[ idx ].TxRequest,                 utSpi_DmaConfig[ 0u ].PeripheralReqId );
+        TEST_ASSERT_EQUAL( periphLut[ idx ].RxRequest,                 utSpi_DmaConfig[ 1u ].PeripheralReqId );
         TEST_ASSERT_NOT_NULL( utSpi_Isr );
+
+        /* Channel selection of the list items equals the one used by the request map */
+        TEST_ASSERT_EQUAL_UINT32( (uint32_t)periphLut[ idx ].TxRequest >> DMA_SxCR_CHSEL_Pos, SPI_DMA_BIT_MASK_DECODE_CHSEL( periphLut[ idx ].TxDma ) );
+        TEST_ASSERT_EQUAL_UINT32( (uint32_t)periphLut[ idx ].RxRequest >> DMA_SxCR_CHSEL_Pos, SPI_DMA_BIT_MASK_DECODE_CHSEL( periphLut[ idx ].RxDma ) );
 
         periphLut[ idx ].PeriphReg->SR = 0u;
         utSpi_Isr();
@@ -2219,9 +2504,6 @@ void Ut_Spi_Dma_OtherPeriphCallbacks_OwnPeripheralReported( void )
         TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Deinit( periphLut[ idx ].PeriphId ) );
         TEST_ASSERT_EQUAL_UINT32( 2u, utSpi_DmaIrqOffCnt );
     }
-#else
-    TEST_IGNORE_MESSAGE( "MCU with SPI1 only" );
-#endif /* SPI2 OR SPI3 OR SPI4 OR SPI5 OR SPI6 */
 }
 
 /* ========================== LOCAL FUNCTIONS =============================== */
@@ -2496,11 +2778,9 @@ static spi_DataConfig_t Ut_Spi_Get_DataConfig( spi_XferMode_t xferMode )
     const spi_DataConfig_t dataConfig =
     {
         .XferMode             = xferMode,
-        .TxDmaPeriphId        = SPI_DMA_PERIPH_2,
-        .TxDmaChannelId       = SPI_DMA_CHANNEL_3,
+        .TxDma                = UT_SPI_TX_DMA,
         .TxDmaPriority        = SPI_DMA_PRIORITY_LOW,
-        .RxDmaPeriphId        = SPI_DMA_PERIPH_2,
-        .RxDmaChannelId       = SPI_DMA_CHANNEL_0,
+        .RxDma                = UT_SPI_RX_DMA,
         .RxDmaPriority        = SPI_DMA_PRIORITY_HIGH,
         .IrqPriority          = UT_SPI_PRIO,
         .XferCompleteCallback = Ut_Spi_XferCompleteCallback,
