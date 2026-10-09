@@ -33,7 +33,9 @@ Not supported: I2S mode, multi-master (master with NSS input), transfers longer 
 | SPI1 - SPI3 | all STM32H5      | 32-bit        | 4 - 32 bits    | 16 × 8-bit | 65534                   |
 | SPI4 - SPI6 | where available  | 16-bit        | 8 or 16 bits   | 8 × 8-bit  | 1022                    |
 
-Kernel clock sources (`spi_ClkSrc_t`):
+Kernel clock sources (`spi_ClkSrc_t`) - a list with one item per peripheral and source, named `SPI_CLK_SRC_SPI<n>_<source>`
+(e.g. `SPI_CLK_SRC_SPI1_PLL2P`). The sources a peripheral does not offer are not in the list, the item shall belong to the
+peripheral of the configuration (`spi_Config_t::PeriphId`):
 
 | Peripheral  | Available sources                                         |
 |-------------|-----------------------------------------------------------|
@@ -107,7 +109,7 @@ Every frame occupies 1 / 2 / 4 bytes of the buffer (data size up to 8 / 16 / 32 
 
 ## GPIO Configuration
 
-Pins are given in `spi_Config_t` (`SckPin`, `MisoPin`, `MosiPin`, `NssPin`) and configured by `Spi_Init()` as push-pull alternate function with `PinSpeed`. The pin is encoded by `SPI_PIN_ENCODE( periph, port, pin, alternate function )` - the alternate function number has to be taken from the device datasheet. The pin must belong to `PeriphId`, otherwise `Spi_Init()` returns error. Use `SPI_PIN_UNUSED` for signals not configured by the module (e.g. MISO in simplex TX, NSS with software NSS).
+Pins are given in `spi_Config_t` (`SckPin`, `MisoPin`, `MosiPin`, `NssPin`) and configured by `Spi_Init()` as push-pull alternate function with `PinSpeed`. The pins are selected from the pin tables `spi_SckPin_t` / `spi_MisoPin_t` / `spi_MosiPin_t` / `spi_NssPin_t` (e.g. `SPI_SCK_PIN_SPI1_PA5`, `SPI_MISO_PIN_SPI1_PA6`, `SPI_NSS_PIN_SPI1_PA4`) - only pins available on the selected device line are defined. The pin tables were generated from the STM32CubeMX database, the alternate function of the item is part of its value. A pin missing in the tables can be encoded by `SPI_PIN_ENCODE( periph, port, pin, alternate function )` (alternate function number from the device datasheet). The pin must belong to `PeriphId`, otherwise `Spi_Init()` returns error. Use the `SPI_*_PIN_UNUSED` item of the table (equal to `SPI_PIN_UNUSED`) for signals not configured by the module (e.g. MISO in simplex TX, NSS with software NSS).
 
 ---
 
@@ -133,12 +135,12 @@ spi_Config_t spiConfig;
 (void)Spi_Get_DefaultConfig( &spiConfig );
 
 spiConfig.PeriphId   = SPI_PERIPH_1;
-spiConfig.ClkSrc     = SPI_CLK_SRC_PLL1Q;
+spiConfig.ClkSrc     = SPI_CLK_SRC_SPI1_PLL1Q;
 spiConfig.BusFreq    = 8000000u;
 spiConfig.DataConfig = &spiData;
-spiConfig.SckPin     = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 );
-spiConfig.MisoPin    = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_6, GPIO_ALT_FUNC_5 );
-spiConfig.MosiPin    = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 );
+spiConfig.SckPin     = SPI_SCK_PIN_SPI1_PA5;
+spiConfig.MisoPin    = SPI_MISO_PIN_SPI1_PA6;
+spiConfig.MosiPin    = SPI_MOSI_PIN_SPI1_PA7;
 
 (void)Spi_Init( &spiConfig );
 

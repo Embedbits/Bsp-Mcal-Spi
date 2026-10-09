@@ -39,7 +39,7 @@ typedef uint8_t spi_FifoBytes_t;
 typedef struct
 {
     SPI_TypeDef          *PeriphReg;                    /**< Peripheral registers                                    */
-    rcc_PeriphId_t        PeriphRcc[ SPI_CLK_SRC_CNT ]; /**< RCC identification per kernel clock source
+    rcc_PeriphId_t        PeriphRcc[ SPI_CLK_SRC_ID_CNT ]; /**< RCC identification per kernel clock source
                                                              (RCC_PERIPH_ID_CNT - source not available)               */
     rcc_PeriphId_t        PeriphRccBase;                /**< RCC identification used for reset / clock disable       */
     nvic_PeriphIrqList_t  PeriphNvic;                   /**< Interrupt NVIC identification                           */
@@ -81,7 +81,7 @@ static spi_RequestState_t  Spi_Check_XferRequest    ( spi_PeriphId_t periphId, c
 static spi_RequestState_t  Spi_Check_DataConfig     ( spi_PeriphId_t periphId, const spi_DataConfig_t * const dataConfig );
 
 static spi_RequestState_t  Spi_Set_Enable           ( spi_PeriphId_t periphId, spi_FunctionState_t enableState );
-static spi_RequestState_t  Spi_Set_SsLevel          ( spi_PeriphId_t periphId );
+static spi_RequestState_t  Spi_Set_SsLevel          ( spi_PeriphId_t periphId, spi_RegValue_t cfgValue );
 static spi_RequestState_t  Spi_Set_Pin              ( spi_PinCode_t pinCode, spi_PinSpeed_t pinSpeed );
 static spi_RequestState_t  Spi_Get_KernelClk        ( spi_PeriphId_t periphId, spi_FreqHz_t * const clkFreq );
 static spi_FrameBytes_t    Spi_Get_FrameBytes       ( spi_DataSize_t dataSize );
@@ -197,9 +197,9 @@ static const spi_PeriphConfigStruct_t spi_PeriphConf[ ] =
 {
 #ifdef SPI1
     { .PeriphReg      = SPI1,
-      .PeriphRcc      = { [SPI_CLK_SRC_PLL1Q] = RCC_PERIPH_SPI1_PLL1Q, [SPI_CLK_SRC_PLL2] = RCC_PERIPH_SPI1_PLL2P, [SPI_CLK_SRC_PLL3] = SPI_RCC_SPI1_PLL3,
-                          [SPI_CLK_SRC_PCLK]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_HSI]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_CSI]  = RCC_PERIPH_ID_CNT,
-                          [SPI_CLK_SRC_HSE]   = RCC_PERIPH_ID_CNT },
+      .PeriphRcc      = { [SPI_CLK_SRC_ID_PLL1Q] = RCC_PERIPH_SPI1_PLL1Q, [SPI_CLK_SRC_ID_PLL2] = RCC_PERIPH_SPI1_PLL2P, [SPI_CLK_SRC_ID_PLL3] = SPI_RCC_SPI1_PLL3,
+                          [SPI_CLK_SRC_ID_PCLK]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_HSI]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_CSI]  = RCC_PERIPH_ID_CNT,
+                          [SPI_CLK_SRC_ID_HSE]   = RCC_PERIPH_ID_CNT },
       .PeriphRccBase  = RCC_PERIPH_SPI1_PLL1Q,
       .PeriphNvic     = NVIC_PERIPH_IRQ_SPI1,    .PeriphIsr      = Spi_Spi1_IsrHandler,
       .PeriphDmaTxReq = GPDMA_REQ_SPI1_TX,       .PeriphDmaRxReq = GPDMA_REQ_SPI1_RX,
@@ -208,9 +208,9 @@ static const spi_PeriphConfigStruct_t spi_PeriphConf[ ] =
 #endif
 #ifdef SPI2
     { .PeriphReg      = SPI2,
-      .PeriphRcc      = { [SPI_CLK_SRC_PLL1Q] = RCC_PERIPH_SPI2_PLL1Q, [SPI_CLK_SRC_PLL2] = RCC_PERIPH_SPI2_PLL2P, [SPI_CLK_SRC_PLL3] = SPI_RCC_SPI2_PLL3,
-                          [SPI_CLK_SRC_PCLK]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_HSI]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_CSI]  = RCC_PERIPH_ID_CNT,
-                          [SPI_CLK_SRC_HSE]   = RCC_PERIPH_ID_CNT },
+      .PeriphRcc      = { [SPI_CLK_SRC_ID_PLL1Q] = RCC_PERIPH_SPI2_PLL1Q, [SPI_CLK_SRC_ID_PLL2] = RCC_PERIPH_SPI2_PLL2P, [SPI_CLK_SRC_ID_PLL3] = SPI_RCC_SPI2_PLL3,
+                          [SPI_CLK_SRC_ID_PCLK]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_HSI]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_CSI]  = RCC_PERIPH_ID_CNT,
+                          [SPI_CLK_SRC_ID_HSE]   = RCC_PERIPH_ID_CNT },
       .PeriphRccBase  = RCC_PERIPH_SPI2_PLL1Q,
       .PeriphNvic     = NVIC_PERIPH_IRQ_SPI2,    .PeriphIsr      = Spi_Spi2_IsrHandler,
       .PeriphDmaTxReq = GPDMA_REQ_SPI2_TX,       .PeriphDmaRxReq = GPDMA_REQ_SPI2_RX,
@@ -219,9 +219,9 @@ static const spi_PeriphConfigStruct_t spi_PeriphConf[ ] =
 #endif
 #ifdef SPI3
     { .PeriphReg      = SPI3,
-      .PeriphRcc      = { [SPI_CLK_SRC_PLL1Q] = RCC_PERIPH_SPI3_PLL1Q, [SPI_CLK_SRC_PLL2] = RCC_PERIPH_SPI3_PLL2P, [SPI_CLK_SRC_PLL3] = SPI_RCC_SPI3_PLL3,
-                          [SPI_CLK_SRC_PCLK]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_HSI]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_CSI]  = RCC_PERIPH_ID_CNT,
-                          [SPI_CLK_SRC_HSE]   = RCC_PERIPH_ID_CNT },
+      .PeriphRcc      = { [SPI_CLK_SRC_ID_PLL1Q] = RCC_PERIPH_SPI3_PLL1Q, [SPI_CLK_SRC_ID_PLL2] = RCC_PERIPH_SPI3_PLL2P, [SPI_CLK_SRC_ID_PLL3] = SPI_RCC_SPI3_PLL3,
+                          [SPI_CLK_SRC_ID_PCLK]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_HSI]  = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_CSI]  = RCC_PERIPH_ID_CNT,
+                          [SPI_CLK_SRC_ID_HSE]   = RCC_PERIPH_ID_CNT },
       .PeriphRccBase  = RCC_PERIPH_SPI3_PLL1Q,
       .PeriphNvic     = NVIC_PERIPH_IRQ_SPI3,    .PeriphIsr      = Spi_Spi3_IsrHandler,
       .PeriphDmaTxReq = GPDMA_REQ_SPI3_TX,       .PeriphDmaRxReq = GPDMA_REQ_SPI3_RX,
@@ -230,9 +230,9 @@ static const spi_PeriphConfigStruct_t spi_PeriphConf[ ] =
 #endif
 #ifdef SPI4
     { .PeriphReg      = SPI4,
-      .PeriphRcc      = { [SPI_CLK_SRC_PLL1Q] = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_PLL2] = RCC_PERIPH_SPI4_PLL2Q, [SPI_CLK_SRC_PLL3] = SPI_RCC_SPI4_PLL3,
-                          [SPI_CLK_SRC_PCLK]  = RCC_PERIPH_SPI4_PCLK2, [SPI_CLK_SRC_HSI]  = RCC_PERIPH_SPI4_HSI64, [SPI_CLK_SRC_CSI]  = RCC_PERIPH_SPI4_CSI,
-                          [SPI_CLK_SRC_HSE]   = RCC_PERIPH_SPI4_HSE },
+      .PeriphRcc      = { [SPI_CLK_SRC_ID_PLL1Q] = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_PLL2] = RCC_PERIPH_SPI4_PLL2Q, [SPI_CLK_SRC_ID_PLL3] = SPI_RCC_SPI4_PLL3,
+                          [SPI_CLK_SRC_ID_PCLK]  = RCC_PERIPH_SPI4_PCLK2, [SPI_CLK_SRC_ID_HSI]  = RCC_PERIPH_SPI4_HSI64, [SPI_CLK_SRC_ID_CSI]  = RCC_PERIPH_SPI4_CSI,
+                          [SPI_CLK_SRC_ID_HSE]   = RCC_PERIPH_SPI4_HSE },
       .PeriphRccBase  = RCC_PERIPH_SPI4_PCLK2,
       .PeriphNvic     = NVIC_PERIPH_IRQ_SPI4,      .PeriphIsr      = Spi_Spi4_IsrHandler,
       .PeriphDmaTxReq = GPDMA_REQ_SPI4_TX,         .PeriphDmaRxReq = GPDMA_REQ_SPI4_RX,
@@ -241,9 +241,9 @@ static const spi_PeriphConfigStruct_t spi_PeriphConf[ ] =
 #endif
 #ifdef SPI5
     { .PeriphReg      = SPI5,
-      .PeriphRcc      = { [SPI_CLK_SRC_PLL1Q] = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_PLL2] = RCC_PERIPH_SPI5_PLL2Q, [SPI_CLK_SRC_PLL3] = RCC_PERIPH_SPI5_PLL3Q,
-                          [SPI_CLK_SRC_PCLK]  = RCC_PERIPH_SPI5_PCLK3, [SPI_CLK_SRC_HSI]  = RCC_PERIPH_SPI5_HSI64, [SPI_CLK_SRC_CSI]  = RCC_PERIPH_SPI5_CSI,
-                          [SPI_CLK_SRC_HSE]   = RCC_PERIPH_SPI5_HSE },
+      .PeriphRcc      = { [SPI_CLK_SRC_ID_PLL1Q] = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_PLL2] = RCC_PERIPH_SPI5_PLL2Q, [SPI_CLK_SRC_ID_PLL3] = RCC_PERIPH_SPI5_PLL3Q,
+                          [SPI_CLK_SRC_ID_PCLK]  = RCC_PERIPH_SPI5_PCLK3, [SPI_CLK_SRC_ID_HSI]  = RCC_PERIPH_SPI5_HSI64, [SPI_CLK_SRC_ID_CSI]  = RCC_PERIPH_SPI5_CSI,
+                          [SPI_CLK_SRC_ID_HSE]   = RCC_PERIPH_SPI5_HSE },
       .PeriphRccBase  = RCC_PERIPH_SPI5_PCLK3,
       .PeriphNvic     = NVIC_PERIPH_IRQ_SPI5,      .PeriphIsr      = Spi_Spi5_IsrHandler,
       .PeriphDmaTxReq = GPDMA_REQ_SPI5_TX,         .PeriphDmaRxReq = GPDMA_REQ_SPI5_RX,
@@ -252,9 +252,9 @@ static const spi_PeriphConfigStruct_t spi_PeriphConf[ ] =
 #endif
 #ifdef SPI6
     { .PeriphReg      = SPI6,
-      .PeriphRcc      = { [SPI_CLK_SRC_PLL1Q] = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_PLL2] = RCC_PERIPH_SPI6_PLL2Q, [SPI_CLK_SRC_PLL3] = RCC_PERIPH_SPI6_PLL3Q,
-                          [SPI_CLK_SRC_PCLK]  = RCC_PERIPH_SPI6_PCLK2, [SPI_CLK_SRC_HSI]  = RCC_PERIPH_SPI6_HSI64, [SPI_CLK_SRC_CSI]  = RCC_PERIPH_SPI6_CSI,
-                          [SPI_CLK_SRC_HSE]   = RCC_PERIPH_SPI6_HSE },
+      .PeriphRcc      = { [SPI_CLK_SRC_ID_PLL1Q] = RCC_PERIPH_ID_CNT,     [SPI_CLK_SRC_ID_PLL2] = RCC_PERIPH_SPI6_PLL2Q, [SPI_CLK_SRC_ID_PLL3] = RCC_PERIPH_SPI6_PLL3Q,
+                          [SPI_CLK_SRC_ID_PCLK]  = RCC_PERIPH_SPI6_PCLK2, [SPI_CLK_SRC_ID_HSI]  = RCC_PERIPH_SPI6_HSI64, [SPI_CLK_SRC_ID_CSI]  = RCC_PERIPH_SPI6_CSI,
+                          [SPI_CLK_SRC_ID_HSE]   = RCC_PERIPH_SPI6_HSE },
       .PeriphRccBase  = RCC_PERIPH_SPI6_PCLK2,
       .PeriphNvic     = NVIC_PERIPH_IRQ_SPI6,      .PeriphIsr      = Spi_Spi6_IsrHandler,
       .PeriphDmaTxReq = GPDMA_REQ_SPI6_TX,         .PeriphDmaRxReq = GPDMA_REQ_SPI6_RX,
@@ -359,7 +359,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
     if( SPI_REQUEST_OK == retState )
     {
         const spi_PeriphId_t periphId = spiConfig->PeriphId;
-        const rcc_PeriphId_t rccId    = spi_PeriphConf[ periphId ].PeriphRcc[ spiConfig->ClkSrc ];
+        const rcc_PeriphId_t rccId    = spi_PeriphConf[ periphId ].PeriphRcc[ SPI_CLK_SRC_BIT_MASK_DECODE_SOURCE( spiConfig->ClkSrc ) ];
         rcc_RequestState_t   rccState = RCC_REQUEST_ERROR;
 
         /*------------- Data handling of previous initialization -------------*/
@@ -404,7 +404,19 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
         }
 
         /*------------- Peripheral configuration (SPE = 0 after reset) -------*/
-        /* Role first - alternate function control keeps master pins driven from now on */
+        /* NSS management before the role - with the reset NSS configuration (hardware NSS input)
+         * the internal slave select of a master is active, HW signals mode fault (MODF) and
+         * clears MASTER */
+        if( SPI_REQUEST_OK == retState )
+        {
+            retState = Spi_Set_NssConfig( periphId, &spiConfig->NssConfig );
+        }
+        else
+        {
+            /* Error during initialization process */
+        }
+
+        /* Role - alternate function control keeps master pins driven from now on */
         if( SPI_REQUEST_OK == retState )
         {
             retState = Spi_Set_Mode( periphId, spiConfig->Mode );
@@ -459,15 +471,6 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
             /* Error during initialization process */
         }
 
-        if( SPI_REQUEST_OK == retState )
-        {
-            retState = Spi_Set_NssConfig( periphId, &spiConfig->NssConfig );
-        }
-        else
-        {
-            /* Error during initialization process */
-        }
-
         /* SCK is generated by the master only */
         if( ( SPI_REQUEST_OK  == retState        ) &&
             ( SPI_MODE_MASTER == spiConfig->Mode )    )
@@ -483,7 +486,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
         /* Pins are configured after the role - master SCK idle level is already driven */
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->SckPin, spiConfig->PinSpeed );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->SckPin, spiConfig->PinSpeed );
         }
         else
         {
@@ -492,7 +495,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->MisoPin, spiConfig->PinSpeed );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->MisoPin, spiConfig->PinSpeed );
         }
         else
         {
@@ -501,7 +504,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->MosiPin, spiConfig->PinSpeed );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->MosiPin, spiConfig->PinSpeed );
         }
         else
         {
@@ -510,7 +513,7 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_Pin( spiConfig->NssPin, spiConfig->PinSpeed );
+            retState = Spi_Set_Pin( (spi_PinCode_t)spiConfig->NssPin, spiConfig->PinSpeed );
         }
         else
         {
@@ -640,7 +643,7 @@ spi_RequestState_t Spi_Get_DefaultConfig( spi_Config_t * const spiConfig )
     if( SPI_NULL_PTR != spiConfig )
     {
         spiConfig->PeriphId           = (spi_PeriphId_t)0u;
-        spiConfig->ClkSrc             = SPI_CLK_SRC_PLL1Q;
+        spiConfig->ClkSrc             = SPI_CLK_SRC_SPI1_PLL1Q;
         spiConfig->Mode               = SPI_MODE_MASTER;
         spiConfig->BusFreq            = SPI_DEFAULT_BUS_FREQ_HZ;
         spiConfig->ClockMode          = SPI_CLOCK_MODE_0;
@@ -652,10 +655,10 @@ spi_RequestState_t Spi_Get_DefaultConfig( spi_Config_t * const spiConfig )
         spiConfig->NssConfig.Polarity = SPI_NSS_POLARITY_LOW;
         spiConfig->NssConfig.Pulse    = SPI_FUNCTION_INACTIVE;
         spiConfig->DataConfig         = SPI_NULL_PTR;
-        spiConfig->SckPin             = SPI_PIN_UNUSED;
-        spiConfig->MisoPin            = SPI_PIN_UNUSED;
-        spiConfig->MosiPin            = SPI_PIN_UNUSED;
-        spiConfig->NssPin             = SPI_PIN_UNUSED;
+        spiConfig->SckPin             = SPI_SCK_PIN_UNUSED;
+        spiConfig->MisoPin            = SPI_MISO_PIN_UNUSED;
+        spiConfig->MosiPin            = SPI_MOSI_PIN_UNUSED;
+        spiConfig->NssPin             = SPI_NSS_PIN_UNUSED;
         spiConfig->PinSpeed           = SPI_PIN_SPEED_HIGH;
 
         retState = SPI_REQUEST_OK;
@@ -755,16 +758,19 @@ spi_RequestState_t Spi_Set_Mode( spi_PeriphId_t periphId, spi_Mode_t mode )
             /* Slave - pins are released while the peripheral is disabled */
         }
 
-        retState = Spi_Set_RegField( &periphReg->CFG2, SPI_CFG2_MODE_MASK, modeValue );
+        /* Internal slave select level of the new role is applied before the role - a master
+         * with active internal slave select signals mode fault (MODF), HW clears MASTER */
+        const spi_RegValue_t cfgValue = ( LL_SPI_ReadReg( periphReg, CFG2 ) & ~SPI_CFG2_MODE_MASK ) | modeValue;
 
-        /* Internal slave select level depends on the role */
+        retState = Spi_Set_SsLevel( periphId, cfgValue );
+
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_SsLevel( periphId );
+            retState = Spi_Set_RegField( &periphReg->CFG2, SPI_CFG2_MODE_MASK, modeValue );
         }
         else
         {
-            /* Role configuration failed */
+            /* Internal slave select configuration failed */
         }
     }
     else
@@ -1410,15 +1416,20 @@ spi_RequestState_t Spi_Set_NssConfig( spi_PeriphId_t periphId, const spi_NssConf
             /* NSS is kept active for the whole transfer */
         }
 
-        retState = Spi_Set_RegField( &spi_PeriphConf[ periphId ].PeriphReg->CFG2, SPI_CFG2_NSS_MASK, nssValue );
+        SPI_TypeDef * const  periphReg = spi_PeriphConf[ periphId ].PeriphReg;
+        const spi_RegValue_t cfgValue  = ( LL_SPI_ReadReg( periphReg, CFG2 ) & ~SPI_CFG2_NSS_MASK ) | nssValue;
+
+        /* Internal slave select level of the new NSS configuration is applied first - master
+         * with software NSS must not see active internal slave select (mode fault) */
+        retState = Spi_Set_SsLevel( periphId, cfgValue );
 
         if( SPI_REQUEST_OK == retState )
         {
-            retState = Spi_Set_SsLevel( periphId );
+            retState = Spi_Set_RegField( &periphReg->CFG2, SPI_CFG2_NSS_MASK, nssValue );
         }
         else
         {
-            /* NSS configuration failed */
+            /* Internal slave select configuration failed */
         }
     }
     else
@@ -2637,7 +2648,8 @@ static spi_RequestState_t Spi_Check_Config( const spi_Config_t * const spiConfig
 
     if( ( SPI_NULL_PTR          != spiConfig              ) &&
         ( SPI_PERIPH_CNT         > spiConfig->PeriphId    ) &&
-        ( SPI_CLK_SRC_CNT        > spiConfig->ClkSrc      ) &&
+        ( (uint32_t)spiConfig->PeriphId == SPI_CLK_SRC_BIT_MASK_DECODE_PERIPH( spiConfig->ClkSrc ) ) &&
+        ( SPI_CLK_SRC_ID_CNT             > SPI_CLK_SRC_BIT_MASK_DECODE_SOURCE( spiConfig->ClkSrc )  ) &&
         ( SPI_MODE_CNT           > spiConfig->Mode        ) &&
         ( SPI_CLOCK_MODE_CNT     > spiConfig->ClockMode   ) &&
         ( SPI_BIT_ORDER_CNT      > spiConfig->BitOrder    ) &&
@@ -2649,12 +2661,12 @@ static spi_RequestState_t Spi_Check_Config( const spi_Config_t * const spiConfig
         const spi_PeriphConfigStruct_t * const periphConf = &spi_PeriphConf[ spiConfig->PeriphId ];
 
         const spi_RequestState_t nssState  = Spi_Check_NssConfig( &spiConfig->NssConfig );
-        const spi_RequestState_t sckState  = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->SckPin );
-        const spi_RequestState_t misoState = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->MisoPin );
-        const spi_RequestState_t mosiState = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->MosiPin );
-        const spi_RequestState_t nssPState = Spi_Check_Pin( spiConfig->PeriphId, spiConfig->NssPin );
+        const spi_RequestState_t sckState  = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->SckPin );
+        const spi_RequestState_t misoState = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->MisoPin );
+        const spi_RequestState_t mosiState = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->MosiPin );
+        const spi_RequestState_t nssPState = Spi_Check_Pin( spiConfig->PeriphId, (spi_PinCode_t)spiConfig->NssPin );
 
-        if( ( RCC_PERIPH_ID_CNT       != periphConf->PeriphRcc[ spiConfig->ClkSrc ] ) &&
+        if( ( RCC_PERIPH_ID_CNT       != periphConf->PeriphRcc[ SPI_CLK_SRC_BIT_MASK_DECODE_SOURCE( spiConfig->ClkSrc ) ] ) &&
             ( periphConf->DataSizeMax >= spiConfig->DataSize                        ) &&
             ( SPI_REQUEST_OK          == nssState                                   ) &&
             ( SPI_REQUEST_OK          == sckState                                   ) &&
@@ -2684,7 +2696,8 @@ static spi_RequestState_t Spi_Check_Config( const spi_Config_t * const spiConfig
  *        and alternate function
  *
  * \param periphId [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
- * \param pinCode  [in]: Encoded pin (\ref SPI_PIN_ENCODE / \ref SPI_PIN_UNUSED)
+ * \param pinCode  [in]: Encoded pin, value from \ref spi_SckPin_t, \ref spi_MisoPin_t,
+ *                      \ref spi_MosiPin_t or \ref spi_NssPin_t (\ref SPI_PIN_UNUSED - unused pin)
  *
  * \return Returns \ref SPI_REQUEST_OK if the pin is unused or valid for the peripheral.
  *         Otherwise returns \ref SPI_REQUEST_ERROR.
@@ -2944,19 +2957,22 @@ static spi_RequestState_t Spi_Set_Enable( spi_PeriphId_t periphId, spi_FunctionS
  * \brief Configures internal slave select level (SSI) used with software NSS: master is never
  *        selected by another master (no mode fault), slave is permanently selected
  *
+ * \note  Called before CFG2 is written - the level of the new configuration is applied while
+ *        the old one is still active (SSI is used by HW only with software NSS).
+ *
  * \param periphId [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
+ * \param cfgValue [in]: CFG2 value the level is derived from (role MASTER, NSS polarity SSIOP)
  *
  * \return Function processing state. Returns \ref SPI_REQUEST_OK if request
  *         was processed without problems. Otherwise returns \ref SPI_REQUEST_ERROR.
  */
-static spi_RequestState_t Spi_Set_SsLevel( spi_PeriphId_t periphId )
+static spi_RequestState_t Spi_Set_SsLevel( spi_PeriphId_t periphId, spi_RegValue_t cfgValue )
 {
     spi_RequestState_t retState = SPI_REQUEST_ERROR;
 
     if( SPI_PERIPH_CNT > periphId )
     {
         SPI_TypeDef * const  periphReg = spi_PeriphConf[ periphId ].PeriphReg;
-        const spi_RegValue_t cfgValue  = LL_SPI_ReadReg( periphReg, CFG2 );
         const spi_RegValue_t isMaster  = cfgValue & SPI_CFG2_MASTER;
         const spi_RegValue_t activeHi  = cfgValue & SPI_CFG2_SSIOP;
         spi_RegValue_t       ssiValue  = 0u;
@@ -3361,11 +3377,13 @@ static spi_RequestState_t Spi_Set_XferEnd( spi_PeriphId_t periphId, spi_XferErro
 
         /* Last received frames may still be moved by DMA - checked before the channels are stopped */
         const spi_RequestState_t doneState   = modeIf->CheckDone( periphId );
+
+        /* Peripheral is disabled before the transfer mode resources are stopped - CFG1 (DMA
+         * requests) is write protected while SPE = 1 */
+        const spi_RequestState_t enableState = Spi_Set_Enable( periphId, SPI_FUNCTION_INACTIVE );
         const spi_RequestState_t stopState   = modeIf->Stop( periphId );
 
         LL_SPI_WriteReg( spi_PeriphConf[ periphId ].PeriphReg, IFCR, SPI_IFCR_ALL );
-
-        const spi_RequestState_t enableState = Spi_Set_Enable( periphId, SPI_FUNCTION_INACTIVE );
 
         if( ( SPI_XFER_ERROR_NONE == xferErr   ) &&
             ( SPI_REQUEST_OK      != doneState )    )
@@ -3424,8 +3442,8 @@ static spi_RequestState_t Spi_Set_XferEnd( spi_PeriphId_t periphId, spi_XferErro
 
 
 /**
- * \brief Aborts the running transfer without callback - transfer mode resources are stopped,
- *        running master transfer is suspended, the peripheral is disabled and flags are cleared
+ * \brief Aborts the running transfer without callback - running master transfer is suspended,
+ *        the peripheral is disabled, transfer mode resources are stopped and flags are cleared
  *
  * \param periphId [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
  *
@@ -3440,7 +3458,6 @@ static spi_RequestState_t Spi_Set_XferAbort( spi_PeriphId_t periphId )
     {
         SPI_TypeDef * const       periphReg = spi_PeriphConf[ periphId ].PeriphReg;
         spi_XferContext_t * const xferCtx   = &spi_XferContext[ periphId ];
-        const spi_RequestState_t  stopState = spi_XferModeLut[ xferCtx->Config.XferMode ].Stop( periphId );
         const uint32_t            masterRun = LL_SPI_IsActiveMasterTransfer( periphReg );
 
         xferCtx->XferState = SPI_FUNCTION_INACTIVE;
@@ -3469,7 +3486,10 @@ static spi_RequestState_t Spi_Set_XferAbort( spi_PeriphId_t periphId )
             /* Master is not clocking */
         }
 
+        /* Peripheral is disabled before the transfer mode resources are stopped - CFG1 (DMA
+         * requests) is write protected while SPE = 1 */
         const spi_RequestState_t enableState = Spi_Set_Enable( periphId, SPI_FUNCTION_INACTIVE );
+        const spi_RequestState_t stopState   = spi_XferModeLut[ xferCtx->Config.XferMode ].Stop( periphId );
 
         LL_SPI_WriteReg( periphReg, IFCR, SPI_IFCR_ALL );
 

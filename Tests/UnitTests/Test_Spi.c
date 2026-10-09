@@ -19,6 +19,8 @@
  *       module passes 32-bit memory addresses to GPDMA.
  * \note Runtime state of the module is static - setUp() releases every
  *       peripheral by Spi_Deinit() with ignored mocks.
+ * \note Mode fault of a master (MODF) is emulated by HW model running in background
+ *       thread (Ut_Spi_HwModel) - tests are executed serially (RUN_SERIAL).
  */
 
 /* ============================= INCLUDES =================================== */
@@ -39,6 +41,7 @@ typedef struct
 {
     uint32_t            ActiveCnt;      /**< Gpdma_Set_ChannelActive() calls     */
     uint32_t            InactiveCnt;    /**< Gpdma_Set_ChannelInactive() calls   */
+    uint32_t            SpeAtInactive;  /**< CR1.SPE at the last Gpdma_Set_ChannelInactive() call */
     uint32_t            IrqOnCnt;       /**< Gpdma_Set_InterruptActive() calls   */
     uint32_t            IrqOffCnt;      /**< Gpdma_Set_InterruptInactive() calls */
     uint32_t            PrioCnt;        /**< Gpdma_Set_Priority() calls          */
@@ -55,11 +58,13 @@ typedef struct
 /* ======================= FORWARD DECLARATIONS ============================= */
 
 static void                 Ut_Spi_Reset_Mocks          ( void );
+static void                 Ut_Spi_HwModel              ( void );
 static void                 Ut_Spi_Ignore_PeriphMocks   ( void );
 static spi_Config_t         Ut_Spi_Get_Config           ( void );
 static spi_DataConfig_t     Ut_Spi_Get_DataConfig       ( spi_XferMode_t xferMode );
 static void                 Ut_Spi_Init                 ( const spi_Config_t * const config );
 static void                 Ut_Spi_Init_Master          ( spi_XferMode_t xferMode );
+static void                 Ut_Spi_Flush_DmaChannelState( void );
 static void                 Ut_Spi_Expect_Activation    ( rcc_PeriphId_t rccId );
 static void                 Ut_Spi_Expect_KernelClk     ( rcc_PeriphId_t clkSrcId, rcc_FreqHz_t clockHz );
 static void                 Ut_Spi_Task                 ( uint32_t srFlags );
@@ -140,10 +145,14 @@ static void                 Ut_Spi_ErrorCallback        ( spi_XferErrorId_t erro
 #define UT_SPI_IER_ALL                      ( UT_SPI_IER_EVENTS | SPI_IER_TXPIE | SPI_IER_RXPIE )
 
 /** Test pins of SPI1 (AF5) */
-#define UT_SPI_SCK_PIN      SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 )
-#define UT_SPI_MISO_PIN     SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_6, GPIO_ALT_FUNC_5 )
-#define UT_SPI_MOSI_PIN     SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 )
-#define UT_SPI_NSS_PIN      SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_4, GPIO_ALT_FUNC_5 )
+#define UT_SPI_SCK_PIN      ( SPI_SCK_PIN_SPI1_PA5 )
+#define UT_SPI_MISO_PIN     ( SPI_MISO_PIN_SPI1_PA6 )
+#define UT_SPI_MOSI_PIN     ( SPI_MOSI_PIN_SPI1_PA7 )
+#define UT_SPI_NSS_PIN      ( SPI_NSS_PIN_SPI1_PA4 )
+
+/** Encoded pin from the peripheral index, port index, pin number and alternate function number
+ *  (bit-fields written independently of SPI_PIN_ENCODE) */
+#define UT_SPI_PIN_CODE( PERIPH, PORT, PIN, AF )    ( ( (PERIPH) << 15u ) | ( (PORT) << 10u ) | ( (PIN) << 5u ) | (AF) )
 
 /* ============================== MACROS ==================================== */
 
@@ -191,12 +200,20 @@ void setUp( void )
 {
     TEST_ASSERT_EQUAL( REGMEM_REQUEST_OK, RegMem_Reset() );
 
+    /* Results of the stubs which the release of the previous test uses (the previous test may set them) */
+    utSpi_ClkHz          = UT_SPI_CLK_HZ;
+    utSpi_NvicOffState   = NVIC_REQUEST_OK;
+    utSpi_DmaInitState   = GPDMA_REQUEST_OK;
+    utSpi_DmaIrqOffState = GPDMA_REQUEST_OK;
+
     Ut_Spi_Ignore_PeriphMocks();
 
     for( spi_PeriphId_t periphId = (spi_PeriphId_t)0u; SPI_PERIPH_CNT > periphId; periphId++ )
     {
         (void)Spi_Deinit( periphId );
     }
+
+    Ut_Spi_Flush_DmaChannelState();
 
     Ut_Spi_Reset_Mocks();
     TEST_ASSERT_EQUAL( REGMEM_REQUEST_OK, RegMem_Reset() );
@@ -243,6 +260,69 @@ void Ut_Spi_Get_ModuleVersion_ReturnsVersion( void )
     TEST_ASSERT_EQUAL_UINT8( 0u, version.Patch );
 }
 
+
+/**
+ * \brief   Items of the pin tables carry peripheral, port, pin and alternate function of the pin.
+ *
+ * \details Expected values are written as (peripheral index, port index, pin number, alternate
+ *          function number) of the datasheet alternate function mapping, independently of the
+ *          encoding macro.
+ *
+ * \par Expected results
+ * - SCK / MISO / MOSI / NSS items of every SPI peripheral carry the expected bit-fields.
+ * - Unused items of the four tables equal SPI_PIN_UNUSED.
+ */
+void Ut_Spi_PinTables_Items_EncodePeriphPortPinAndAf( void )
+{
+    /* SPI1 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 0u, 5u, 5u ), SPI_SCK_PIN_SPI1_PA5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 0u, 6u, 5u ), SPI_MISO_PIN_SPI1_PA6 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 0u, 7u, 5u ), SPI_MOSI_PIN_SPI1_PA7 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_1, 0u, 4u, 5u ), SPI_NSS_PIN_SPI1_PA4 );
+
+    /* SPI2 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 13u, 5u ), SPI_SCK_PIN_SPI2_PB13 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 14u, 5u ), SPI_MISO_PIN_SPI2_PB14 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 15u, 5u ), SPI_MOSI_PIN_SPI2_PB15 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_2, 1u, 12u, 5u ), SPI_NSS_PIN_SPI2_PB12 );
+
+    /* SPI3 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 2u, 10u, 6u ), SPI_SCK_PIN_SPI3_PC10 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 2u, 11u, 6u ), SPI_MISO_PIN_SPI3_PC11 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 2u, 12u, 6u ), SPI_MOSI_PIN_SPI3_PC12 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_3, 0u, 15u, 6u ), SPI_NSS_PIN_SPI3_PA15 );
+
+#if defined(SPI4)
+    /* SPI4 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_4, 4u, 12u, 5u ), SPI_SCK_PIN_SPI4_PE12 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_4, 4u, 13u, 5u ), SPI_MISO_PIN_SPI4_PE13 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_4, 4u, 14u, 5u ), SPI_MOSI_PIN_SPI4_PE14 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_4, 4u, 11u, 5u ), SPI_NSS_PIN_SPI4_PE11 );
+#endif /* SPI4 */
+
+#if defined(SPI5)
+    /* SPI5 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_5, 5u, 7u, 5u ), SPI_SCK_PIN_SPI5_PF7 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_5, 5u, 8u, 5u ), SPI_MISO_PIN_SPI5_PF8 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_5, 5u, 9u, 5u ), SPI_MOSI_PIN_SPI5_PF9 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_5, 5u, 6u, 5u ), SPI_NSS_PIN_SPI5_PF6 );
+#endif /* SPI5 */
+
+#if defined(SPI6)
+    /* SPI6 */
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 0u, 5u, 8u ), SPI_SCK_PIN_SPI6_PA5 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 0u, 6u, 8u ), SPI_MISO_PIN_SPI6_PA6 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 0u, 7u, 8u ), SPI_MOSI_PIN_SPI6_PA7 );
+    TEST_ASSERT_EQUAL_HEX32( UT_SPI_PIN_CODE( SPI_PERIPH_6, 0u, 0u, 5u ), SPI_NSS_PIN_SPI6_PA0 );
+#endif /* SPI6 */
+
+    /* Unused pin */
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_SCK_PIN_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_MISO_PIN_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_MOSI_PIN_UNUSED );
+    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, SPI_NSS_PIN_UNUSED );
+}
+
 /* ========================== INITIALIZATION ================================ */
 
 /**
@@ -262,7 +342,7 @@ void Ut_Spi_Get_DefaultConfig_FillsDefaults( void )
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Get_DefaultConfig( &config ) );
 
     TEST_ASSERT_EQUAL( (spi_PeriphId_t)0u, config.PeriphId );
-    TEST_ASSERT_EQUAL( SPI_CLK_SRC_PLL1Q, config.ClkSrc );
+    TEST_ASSERT_EQUAL( SPI_CLK_SRC_SPI1_PLL1Q, config.ClkSrc );
     TEST_ASSERT_EQUAL( SPI_MODE_MASTER, config.Mode );
     TEST_ASSERT_EQUAL_UINT32( 1000000u, config.BusFreq );
     TEST_ASSERT_EQUAL( SPI_CLOCK_MODE_0, config.ClockMode );
@@ -274,10 +354,10 @@ void Ut_Spi_Get_DefaultConfig_FillsDefaults( void )
     TEST_ASSERT_EQUAL( SPI_NSS_POLARITY_LOW, config.NssConfig.Polarity );
     TEST_ASSERT_EQUAL( SPI_FUNCTION_INACTIVE, config.NssConfig.Pulse );
     TEST_ASSERT_NULL( config.DataConfig );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, config.SckPin );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, config.MisoPin );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, config.MosiPin );
-    TEST_ASSERT_EQUAL_HEX32( SPI_PIN_UNUSED, config.NssPin );
+    TEST_ASSERT_EQUAL( SPI_SCK_PIN_UNUSED, config.SckPin );
+    TEST_ASSERT_EQUAL( SPI_MISO_PIN_UNUSED, config.MisoPin );
+    TEST_ASSERT_EQUAL( SPI_MOSI_PIN_UNUSED, config.MosiPin );
+    TEST_ASSERT_EQUAL( SPI_NSS_PIN_UNUSED, config.NssPin );
     TEST_ASSERT_EQUAL( SPI_PIN_SPEED_HIGH, config.PinSpeed );
 
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Get_DefaultConfig( NULL ) );
@@ -289,8 +369,9 @@ void Ut_Spi_Get_DefaultConfig_FillsDefaults( void )
  *
  * \details NULL, invalid peripheral, clock source, mode, clock mode, bit order, direction,
  *          frame format, pin speed, master with zero frequency, clock source not available
- *          for SPI1 (PCLK), NSS pulse with software NSS, invalid NSS mode, pin of other
- *          peripheral, invalid pin port, data size out of range.
+ *          for SPI1 (PCLK), NSS pulse with software NSS, invalid NSS mode, SCK / MISO / MOSI / NSS
+ *          pin of other peripheral, pin with port / pin / alternate function out of range, data
+ *          size out of range.
  *
  * \par Expected results
  * - SPI_REQUEST_ERROR, no RCC / GPIO call (strict mocks), CFG1 / CFG2 / CR1 not written.
@@ -303,9 +384,11 @@ void Ut_Spi_Init_InvalidConfig_ReturnsErrorWithoutAccess( void )
 
     config = Ut_Spi_Get_Config(); config.PeriphId         = SPI_PERIPH_CNT;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
-    config = Ut_Spi_Get_Config(); config.ClkSrc           = SPI_CLK_SRC_CNT;
+    config = Ut_Spi_Get_Config(); config.ClkSrc           = (spi_ClkSrc_t)SPI_CLK_SRC_ENCODE( SPI_PERIPH_1, SPI_CLK_SRC_ID_CNT );
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
-    config = Ut_Spi_Get_Config(); config.ClkSrc           = SPI_CLK_SRC_PCLK;
+    config = Ut_Spi_Get_Config(); config.ClkSrc           = SPI_CLK_SRC_SPI2_PLL1Q;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+    config = Ut_Spi_Get_Config(); config.ClkSrc           = (spi_ClkSrc_t)SPI_CLK_SRC_ENCODE( SPI_PERIPH_1, SPI_CLK_SRC_ID_PCLK );
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
     config = Ut_Spi_Get_Config(); config.Mode             = SPI_MODE_CNT;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
@@ -325,9 +408,19 @@ void Ut_Spi_Init_InvalidConfig_ReturnsErrorWithoutAccess( void )
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
     config = Ut_Spi_Get_Config(); config.NssConfig.Mode   = SPI_NSS_MODE_CNT;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
-    config = Ut_Spi_Get_Config(); config.SckPin           = SPI_PIN_ENCODE( UT_SPI_BUS + 1u, GPIO_PORT_B, GPIO_PIN_ID_10, GPIO_ALT_FUNC_5 );
+    config = Ut_Spi_Get_Config(); config.SckPin        = SPI_SCK_PIN_SPI2_PB13;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
-    config = Ut_Spi_Get_Config(); config.MosiPin          = SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_CNT, GPIO_PIN_ID_7, GPIO_ALT_FUNC_5 );
+    config = Ut_Spi_Get_Config(); config.MisoPin       = SPI_MISO_PIN_SPI2_PB14;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+    config = Ut_Spi_Get_Config(); config.MosiPin       = SPI_MOSI_PIN_SPI2_PB15;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+    config = Ut_Spi_Get_Config(); config.NssPin        = SPI_NSS_PIN_SPI2_PB12;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+    config = Ut_Spi_Get_Config(); config.SckPin        = (spi_SckPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_CNT, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+    config = Ut_Spi_Get_Config(); config.MisoPin       = (spi_MisoPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_CNT, GPIO_ALT_FUNC_5 );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
+    config = Ut_Spi_Get_Config(); config.MosiPin       = (spi_MosiPin_t)SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_7, GPIO_ALT_FUNC_CNT );
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
     config = Ut_Spi_Get_Config(); config.DataSize         = SPI_DATA_SIZE_CNT;
     TEST_ASSERT_EQUAL( SPI_REQUEST_ERROR, Spi_Init( &config ) );
@@ -379,7 +472,7 @@ void Ut_Spi_Init_ClockSourcePll2_ClockOfSourceActivated( void )
 {
     spi_Config_t config = Ut_Spi_Get_Config();
 
-    config.ClkSrc = SPI_CLK_SRC_PLL2;
+    config.ClkSrc = SPI_CLK_SRC_SPI1_PLL2P;
 
     Ut_Spi_Expect_Activation( RCC_PERIPH_SPI1_PLL2P );
     Ut_Spi_Expect_KernelClk( RCC_PERIPH_SPI1_PLL2P, 50000000u );
@@ -387,6 +480,90 @@ void Ut_Spi_Init_ClockSourcePll2_ClockOfSourceActivated( void )
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Init( &config ) );
 
     TEST_ASSERT_EQUAL_HEX32( 5u << SPI_CFG1_MBR_Pos, UT_SPI_REG->CFG1 & SPI_CFG1_MBR );
+}
+
+
+/**
+ * \brief   Spi_Init() activates the clock of the RCC identification of every kernel clock source item.
+ *
+ * \details Every item of \ref spi_ClkSrc_t is passed in the configuration of its peripheral.
+ *
+ * \par Expected results
+ * - SPI_REQUEST_OK, Rcc_Set_PeriphActive / reset with the RCC identification of the item (strict mocks).
+ */
+void Ut_Spi_Init_ClockSourceItems_ActivateOwnRccId( void )
+{
+    static const struct
+    {
+        spi_PeriphId_t PeriphId;
+        spi_ClkSrc_t   ClkSrc;
+        rcc_PeriphId_t RccId;
+    }   itemLut[] =
+    {
+#ifdef SPI1
+        { SPI_PERIPH_1, SPI_CLK_SRC_SPI1_PLL1Q, RCC_PERIPH_SPI1_PLL1Q },
+        { SPI_PERIPH_1, SPI_CLK_SRC_SPI1_PLL2P, RCC_PERIPH_SPI1_PLL2P },
+#if defined(RCC_CR_PLL3ON)
+        { SPI_PERIPH_1, SPI_CLK_SRC_SPI1_PLL3P, RCC_PERIPH_SPI1_PLL3P },
+#endif /* RCC_CR_PLL3ON */
+#endif /* SPI1 */
+#ifdef SPI2
+        { SPI_PERIPH_2, SPI_CLK_SRC_SPI2_PLL1Q, RCC_PERIPH_SPI2_PLL1Q },
+        { SPI_PERIPH_2, SPI_CLK_SRC_SPI2_PLL2P, RCC_PERIPH_SPI2_PLL2P },
+#if defined(RCC_CR_PLL3ON)
+        { SPI_PERIPH_2, SPI_CLK_SRC_SPI2_PLL3P, RCC_PERIPH_SPI2_PLL3P },
+#endif /* RCC_CR_PLL3ON */
+#endif /* SPI2 */
+#ifdef SPI3
+        { SPI_PERIPH_3, SPI_CLK_SRC_SPI3_PLL1Q, RCC_PERIPH_SPI3_PLL1Q },
+        { SPI_PERIPH_3, SPI_CLK_SRC_SPI3_PLL2P, RCC_PERIPH_SPI3_PLL2P },
+#if defined(RCC_CR_PLL3ON)
+        { SPI_PERIPH_3, SPI_CLK_SRC_SPI3_PLL3P, RCC_PERIPH_SPI3_PLL3P },
+#endif /* RCC_CR_PLL3ON */
+#endif /* SPI3 */
+#ifdef SPI4
+        { SPI_PERIPH_4, SPI_CLK_SRC_SPI4_PLL2Q, RCC_PERIPH_SPI4_PLL2Q },
+#if defined(RCC_CR_PLL3ON)
+        { SPI_PERIPH_4, SPI_CLK_SRC_SPI4_PLL3Q, RCC_PERIPH_SPI4_PLL3Q },
+#endif /* RCC_CR_PLL3ON */
+        { SPI_PERIPH_4, SPI_CLK_SRC_SPI4_PCLK2, RCC_PERIPH_SPI4_PCLK2 },
+        { SPI_PERIPH_4, SPI_CLK_SRC_SPI4_HSI, RCC_PERIPH_SPI4_HSI64 },
+        { SPI_PERIPH_4, SPI_CLK_SRC_SPI4_CSI, RCC_PERIPH_SPI4_CSI },
+        { SPI_PERIPH_4, SPI_CLK_SRC_SPI4_HSE, RCC_PERIPH_SPI4_HSE },
+#endif /* SPI4 */
+#ifdef SPI5
+        { SPI_PERIPH_5, SPI_CLK_SRC_SPI5_PLL2Q, RCC_PERIPH_SPI5_PLL2Q },
+        { SPI_PERIPH_5, SPI_CLK_SRC_SPI5_PLL3Q, RCC_PERIPH_SPI5_PLL3Q },
+        { SPI_PERIPH_5, SPI_CLK_SRC_SPI5_PCLK3, RCC_PERIPH_SPI5_PCLK3 },
+        { SPI_PERIPH_5, SPI_CLK_SRC_SPI5_HSI, RCC_PERIPH_SPI5_HSI64 },
+        { SPI_PERIPH_5, SPI_CLK_SRC_SPI5_CSI, RCC_PERIPH_SPI5_CSI },
+        { SPI_PERIPH_5, SPI_CLK_SRC_SPI5_HSE, RCC_PERIPH_SPI5_HSE },
+#endif /* SPI5 */
+#ifdef SPI6
+        { SPI_PERIPH_6, SPI_CLK_SRC_SPI6_PLL2Q, RCC_PERIPH_SPI6_PLL2Q },
+        { SPI_PERIPH_6, SPI_CLK_SRC_SPI6_PLL3Q, RCC_PERIPH_SPI6_PLL3Q },
+        { SPI_PERIPH_6, SPI_CLK_SRC_SPI6_PCLK2, RCC_PERIPH_SPI6_PCLK2 },
+        { SPI_PERIPH_6, SPI_CLK_SRC_SPI6_HSI, RCC_PERIPH_SPI6_HSI64 },
+        { SPI_PERIPH_6, SPI_CLK_SRC_SPI6_CSI, RCC_PERIPH_SPI6_CSI },
+        { SPI_PERIPH_6, SPI_CLK_SRC_SPI6_HSE, RCC_PERIPH_SPI6_HSE },
+#endif /* SPI6 */
+    };
+
+    Rcc_Get_PeriphClkSrc_Stub( Ut_Spi_RccClkSrcStub );
+    Rcc_Get_PeriphClk_Stub( Ut_Spi_RccClkStub );
+    utSpi_ClkHz = UT_SPI_CLK_HZ;
+
+    for( uint32_t idx = 0u; ( sizeof( itemLut ) / sizeof( itemLut[ 0u ] ) ) > idx; idx++ )
+    {
+        spi_Config_t config = Ut_Spi_Get_Config();
+
+        config.PeriphId = itemLut[ idx ].PeriphId;
+        config.ClkSrc   = itemLut[ idx ].ClkSrc;
+
+        Ut_Spi_Expect_Activation( itemLut[ idx ].RccId );
+
+        TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Init( &config ) );
+    }
 }
 
 
@@ -450,6 +627,37 @@ void Ut_Spi_Init_SlaveHardNss_NoBusFrequency( void )
     TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CFG2 & ( SPI_CFG2_MASTER | SPI_CFG2_AFCNTR | SPI_CFG2_SSM ) );
     TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CR1 & SPI_CR1_SSI );
     TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CFG1 & SPI_CFG1_MBR );
+}
+
+
+/**
+ * \brief   Spi_Init() configures a master without mode fault.
+ *
+ * \details HW model emulates mode fault: master (CFG2.MASTER) with active internal slave
+ *          select (software NSS with SSI at the active level, or hardware NSS input) gets
+ *          SR.MODF and MASTER is cleared by HW. Default master configuration (software
+ *          NSS) is initialized from the reset state of the registers.
+ * \note    Bug AB#1148: MASTER was written before the NSS configuration (reset state =
+ *          hardware NSS input) and before SSI - mode fault, Spi_Init() of a master returned
+ *          SPI_REQUEST_ERROR on target.
+ *
+ * \par Expected results
+ * - SPI_REQUEST_OK, CFG2.MASTER and SSM set, CR1.SSI set, SR.MODF = 0.
+ */
+void Ut_Spi_Init_MasterModeFaultModel_NoModeFault( void )
+{
+    const spi_Config_t config = Ut_Spi_Get_Config();
+
+    Ut_Spi_Expect_Activation( UT_SPI_RCC );
+    Ut_Spi_Expect_KernelClk( UT_SPI_RCC, UT_SPI_CLK_HZ );
+    TEST_ASSERT_EQUAL( REGMEM_REQUEST_OK, RegMem_Set_ModelActive( Ut_Spi_HwModel ) );
+
+    TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Init( &config ) );
+
+    TEST_ASSERT_EQUAL( REGMEM_REQUEST_OK, RegMem_Set_ModelInactive() );
+    TEST_ASSERT_EQUAL_HEX32( SPI_CFG2_MASTER | SPI_CFG2_SSM, UT_SPI_REG->CFG2 & ( SPI_CFG2_MASTER | SPI_CFG2_SSM ) );
+    TEST_ASSERT_EQUAL_HEX32( SPI_CR1_SSI, UT_SPI_REG->CR1 & SPI_CR1_SSI );
+    TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->SR & SPI_SR_MODF );
 }
 
 
@@ -1593,6 +1801,40 @@ void Ut_Spi_Set_XferStop_RunningTransferAborted( void )
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_XferStop( UT_SPI_BUS ) );
 }
 
+
+/**
+ * \brief   Spi_Set_XferStop() of a DMA transfer disables the peripheral before DMA is stopped.
+ *
+ * \details Master DMA transfer running (CSTART), SUSP preset, Spi_Set_XferStop().
+ * \note    Bug AB#1161: GPDMA channels and DMA requests (CFG1, write protected while
+ *          SPE = 1 on STM32H5) were stopped before SPE was cleared - abort failed on target.
+ *
+ * \par Expected results
+ * - SPI_REQUEST_OK, GPDMA channels stopped with SPE = 0, DMA requests and SPE cleared.
+ */
+void Ut_Spi_Set_XferStop_DmaTransfer_DisabledBeforeDmaStop( void )
+{
+    uint8_t * const           txBuf   = REGMEM_SRAM_PTR( uint8_t, UT_SPI_TX_BUF_OFFSET );
+    uint8_t * const           rxBuf   = REGMEM_SRAM_PTR( uint8_t, UT_SPI_RX_BUF_OFFSET );
+    const spi_XferRequest_t   request = { .TxData = txBuf, .RxData = rxBuf, .XferSize = 3u };
+    const ut_SpiDmaChannel_t *txChan  = Ut_Spi_Get_DmaChannel( UT_SPI_DMA, UT_SPI_DMA_TX_CHANNEL );
+    const ut_SpiDmaChannel_t *rxChan  = Ut_Spi_Get_DmaChannel( UT_SPI_DMA, UT_SPI_DMA_RX_CHANNEL );
+
+    Ut_Spi_Init_Master( SPI_XFER_MODE_DMA );
+    TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_XferStart( UT_SPI_BUS, &request ) );
+    TEST_ASSERT_EQUAL_HEX32( SPI_CR1_SPE, UT_SPI_REG->CR1 & SPI_CR1_SPE );
+
+    UT_SPI_REG->SR = SPI_SR_SUSP;
+    TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_XferStop( UT_SPI_BUS ) );
+
+    TEST_ASSERT_EQUAL_UINT32( 2u, txChan->InactiveCnt );
+    TEST_ASSERT_EQUAL_UINT32( 2u, rxChan->InactiveCnt );
+    TEST_ASSERT_EQUAL_HEX32( 0u, txChan->SpeAtInactive );
+    TEST_ASSERT_EQUAL_HEX32( 0u, rxChan->SpeAtInactive );
+    TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CFG1 & ( SPI_CFG1_TXDMAEN | SPI_CFG1_RXDMAEN ) );
+    TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CR1 & SPI_CR1_SPE );
+}
+
 /* ========================== INTERRUPT TRANSFERS =========================== */
 
 /**
@@ -1751,6 +1993,8 @@ void Ut_Spi_Dma_FullDuplex_ChannelsArmedAndEotCompletes( void )
     Ut_Spi_Check_XferEnd( SPI_XFER_ERROR_NONE );
     TEST_ASSERT_EQUAL_UINT32( 2u, txChan->InactiveCnt );
     TEST_ASSERT_EQUAL_UINT32( 2u, rxChan->InactiveCnt );
+    TEST_ASSERT_EQUAL_HEX32( 0u, txChan->SpeAtInactive );
+    TEST_ASSERT_EQUAL_HEX32( 0u, rxChan->SpeAtInactive );
     TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CFG1 & ( SPI_CFG1_TXDMAEN | SPI_CFG1_RXDMAEN ) );
     TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->IER );
     TEST_ASSERT_EQUAL_HEX32( 0u, UT_SPI_REG->CR1 & SPI_CR1_SPE );
@@ -1897,19 +2141,19 @@ void Ut_Spi_OtherPeriph_OwnInterruptAndDmaCallbacks( void )
     }   periphLut[] =
     {
 #ifdef SPI2
-        { SPI_PERIPH_2, SPI2, SPI_CLK_SRC_PLL1Q, GPDMA_REQ_SPI2_TX, GPDMA_REQ_SPI2_RX },
+        { SPI_PERIPH_2, SPI2, SPI_CLK_SRC_SPI2_PLL1Q, GPDMA_REQ_SPI2_TX, GPDMA_REQ_SPI2_RX },
 #endif /* SPI2 */
 #ifdef SPI3
-        { SPI_PERIPH_3, SPI3, SPI_CLK_SRC_PLL1Q, GPDMA_REQ_SPI3_TX, GPDMA_REQ_SPI3_RX },
+        { SPI_PERIPH_3, SPI3, SPI_CLK_SRC_SPI3_PLL1Q, GPDMA_REQ_SPI3_TX, GPDMA_REQ_SPI3_RX },
 #endif /* SPI3 */
 #ifdef SPI4
-        { SPI_PERIPH_4, SPI4, SPI_CLK_SRC_PCLK,  GPDMA_REQ_SPI4_TX, GPDMA_REQ_SPI4_RX },
+        { SPI_PERIPH_4, SPI4, SPI_CLK_SRC_SPI4_PCLK2, GPDMA_REQ_SPI4_TX, GPDMA_REQ_SPI4_RX },
 #endif /* SPI4 */
 #ifdef SPI5
-        { SPI_PERIPH_5, SPI5, SPI_CLK_SRC_PCLK,  GPDMA_REQ_SPI5_TX, GPDMA_REQ_SPI5_RX },
+        { SPI_PERIPH_5, SPI5, SPI_CLK_SRC_SPI5_PCLK3, GPDMA_REQ_SPI5_TX, GPDMA_REQ_SPI5_RX },
 #endif /* SPI5 */
 #ifdef SPI6
-        { SPI_PERIPH_6, SPI6, SPI_CLK_SRC_PCLK,  GPDMA_REQ_SPI6_TX, GPDMA_REQ_SPI6_RX },
+        { SPI_PERIPH_6, SPI6, SPI_CLK_SRC_SPI6_PCLK2, GPDMA_REQ_SPI6_TX, GPDMA_REQ_SPI6_RX },
 #endif /* SPI6 */
     };
     uint8_t * const         rxBuf   = REGMEM_SRAM_PTR( uint8_t, UT_SPI_RX_BUF_OFFSET );
@@ -1959,6 +2203,63 @@ void Ut_Spi_OtherPeriph_OwnInterruptAndDmaCallbacks( void )
 }
 
 /* ========================== LOCAL FUNCTIONS =============================== */
+
+/**
+ * \brief HW model of the SPI mode fault (runs in background thread): master with active
+ *        internal slave select gets SR.MODF, MASTER is cleared by HW.
+ *
+ * Internal slave select: software NSS - SSI at the active level (SSIOP), hardware NSS
+ * input - active (NSS pin is not driven by the test), hardware NSS output - inactive.
+ * CFG2 is read before CR1 - the module writes SSI before MASTER.
+ */
+static void Ut_Spi_HwModel( void )
+{
+    const uint32_t cfg2     = UT_SPI_REG->CFG2;
+    const uint32_t ssi      = UT_SPI_REG->CR1 & SPI_CR1_SSI;
+    const uint32_t activeHi = cfg2 & SPI_CFG2_SSIOP;
+    uint32_t       ssActive = 0u;
+
+    if( 0u != ( cfg2 & SPI_CFG2_SSM ) )
+    {
+        if( ( 0u != ssi      ) &&
+            ( 0u != activeHi )    )
+        {
+            ssActive = 1u;
+        }
+        else if( ( 0u == ssi      ) &&
+                 ( 0u == activeHi )    )
+        {
+            ssActive = 1u;
+        }
+        else
+        {
+            /* Software NSS at the inactive level */
+            ssActive = 0u;
+        }
+    }
+    else if( 0u == ( cfg2 & SPI_CFG2_SSOE ) )
+    {
+        /* Hardware NSS input - slave select is active */
+        ssActive = 1u;
+    }
+    else
+    {
+        /* Hardware NSS output - master drives NSS */
+        ssActive = 0u;
+    }
+
+    if( ( 0u != ( cfg2 & SPI_CFG2_MASTER ) ) &&
+        ( 0u != ssActive                    )    )
+    {
+        (void)__atomic_and_fetch( &UT_SPI_REG->CFG2, ~SPI_CFG2_MASTER, __ATOMIC_SEQ_CST );
+        (void)__atomic_or_fetch( &UT_SPI_REG->SR, SPI_SR_MODF, __ATOMIC_SEQ_CST );
+    }
+    else
+    {
+        /* No mode fault */
+    }
+}
+
 
 /**
  * \brief Verifies and resets all mocks (CMock memory is common for all mocks - a single mock
@@ -2087,6 +2388,30 @@ static void Ut_Spi_Init_Master( spi_XferMode_t xferMode )
     config.DataConfig = ( SPI_XFER_MODE_CNT > xferMode ) ? &dataConfig : NULL;
 
     Ut_Spi_Init( &config );
+}
+
+
+/**
+ * \brief Makes the module forget the GPDMA channels of the previous test.
+ *
+ * The module keeps the GPDMA channels configured by Spi_Set_DataConfig() after Spi_Deinit()
+ * (the channel is reused, only its priority is updated - GPDMA module can not release a single
+ * channel). A test which expects Gpdma_Init() would depend on the tests executed before it
+ * (all tests in one process). SPI1 is configured with DMA data handling on two GPDMA channels
+ * which no test uses (the last two recorded channels), so the following test configures other channels
+ * and Gpdma_Init() is called.
+ */
+static void Ut_Spi_Flush_DmaChannelState( void )
+{
+    spi_Config_t     config     = Ut_Spi_Get_Config();
+    spi_DataConfig_t dataConfig = Ut_Spi_Get_DataConfig( SPI_XFER_MODE_DMA );
+
+    dataConfig.TxDmaChannelId = (spi_DmaChannelId_t)( (uint32_t)UT_SPI_DMA_CHANNELS - 1u );
+    dataConfig.RxDmaChannelId = (spi_DmaChannelId_t)( (uint32_t)UT_SPI_DMA_CHANNELS - 2u );
+    config.DataConfig         = &dataConfig;
+
+    Ut_Spi_Init( &config );
+    (void)Spi_Deinit( UT_SPI_BUS );
 }
 
 
@@ -2292,6 +2617,7 @@ static gpdma_RequestState_t Ut_Spi_DmaInactiveStub( gpdma_PeriphId_t dmaBus, gpd
 {
     (void)callCnt;
     Ut_Spi_Get_DmaChannel( dmaBus, dmaChannel )->InactiveCnt++;
+    Ut_Spi_Get_DmaChannel( dmaBus, dmaChannel )->SpeAtInactive = UT_SPI_REG->CR1 & SPI_CR1_SPE;
     return ( GPDMA_REQUEST_OK );
 }
 

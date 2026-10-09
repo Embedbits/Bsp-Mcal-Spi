@@ -55,8 +55,8 @@ extern "C" {
  * \brief Encodes pin configuration (peripheral, port, pin, alternate function) into single value
  *        of \ref spi_PinCode_t
  *
- * Alternate function of the pin has to be taken from the device datasheet (alternate function
- * mapping table), e.g. SPI1 SCK on PA5 with AF5:
+ * The macro defines the values of the pin tables \ref spi_SckPin_t, \ref spi_MisoPin_t,
+ * \ref spi_MosiPin_t and \ref spi_NssPin_t, e.g. SPI1 SCK on PA5 with AF5 is \ref SPI_SCK_PIN_SPI1_PA5:
  * SPI_PIN_ENCODE( SPI_PERIPH_1, GPIO_PORT_A, GPIO_PIN_ID_5, GPIO_ALT_FUNC_5 )
  */
 #define SPI_PIN_ENCODE( PERIPH_ID, PORT_ID, PIN_ID, AF_ID )     ( (spi_PinCode_t)( ( (uint32_t)(PERIPH_ID) << SPI_BIT_MASK_PERIPH_BIT_OFFSET ) | \
@@ -64,7 +64,7 @@ extern "C" {
                                                                                    ( (uint32_t)(PIN_ID)    << SPI_BIT_MASK_PIN_BIT_OFFSET    ) | \
                                                                                    ( (uint32_t)(AF_ID)     << SPI_BIT_MASK_AF_BIT_OFFSET     )   ) )
 
-/** Pin is not configured by the module */
+/** Pin is not configured by the module (value of the *_PIN_UNUSED items of the pin tables) */
 #define SPI_PIN_UNUSED                      SPI_PIN_ENCODE( SPI_PERIPH_CNT, GPIO_PORT_CNT, GPIO_PIN_ID_CNT, GPIO_ALT_FUNC_CNT )
 
 /** Extract peripheral ID from encoded pin value */
@@ -78,6 +78,30 @@ extern "C" {
 
 /** Extract alternate function ID from encoded pin value */
 #define SPI_BIT_MASK_DECODE_AF( CODED_VAL )         ( ( (CODED_VAL) >> SPI_BIT_MASK_AF_BIT_OFFSET ) & SPI_BIT_MASK_FIELD )
+
+/** Peripheral identification bit offset in encoded kernel clock source value */
+#define SPI_CLK_SRC_BIT_MASK_PERIPH_BIT_OFFSET  ( 8u )
+
+/** Source identification bit offset in encoded kernel clock source value */
+#define SPI_CLK_SRC_BIT_MASK_SOURCE_BIT_OFFSET  ( 0u )
+
+/** Mask of one field (8 bits) in encoded kernel clock source value */
+#define SPI_CLK_SRC_BIT_MASK_FIELD              ( 0xFFu )
+
+/**
+ * \brief Encodes kernel clock source (peripheral, source) into single value of \ref spi_ClkSrc_t
+ *
+ * The macro defines the items of the kernel clock source list \ref spi_ClkSrc_t, e.g. the PLL2 output P as kernel
+ * clock of SPI1 is \ref SPI_CLK_SRC_SPI1_PLL2P: SPI_CLK_SRC_ENCODE( SPI_PERIPH_1, SPI_CLK_SRC_ID_PLL2 )
+ */
+#define SPI_CLK_SRC_ENCODE( PERIPH_ID, SOURCE_ID )  ( (uint32_t)( ( (uint32_t)(PERIPH_ID) << SPI_CLK_SRC_BIT_MASK_PERIPH_BIT_OFFSET ) | \
+                                                                  ( (uint32_t)(SOURCE_ID) << SPI_CLK_SRC_BIT_MASK_SOURCE_BIT_OFFSET )   ) )
+
+/** Extract SPI peripheral ID from encoded kernel clock source value */
+#define SPI_CLK_SRC_BIT_MASK_DECODE_PERIPH( CODED_VAL )  ( ( (uint32_t)(CODED_VAL) >> SPI_CLK_SRC_BIT_MASK_PERIPH_BIT_OFFSET ) & SPI_CLK_SRC_BIT_MASK_FIELD )
+
+/** Extract source ID (\ref spi_ClkSrcId_t) from encoded kernel clock source value */
+#define SPI_CLK_SRC_BIT_MASK_DECODE_SOURCE( CODED_VAL )  ( ( (uint32_t)(CODED_VAL) >> SPI_CLK_SRC_BIT_MASK_SOURCE_BIT_OFFSET ) & SPI_CLK_SRC_BIT_MASK_FIELD )
 
 /* ============================== TYPEDEFS ================================== */
 
@@ -147,7 +171,7 @@ typedef uint32_t spi_CrcPoly_t;
 /** \brief CRC value (TXCRC / RXCRC register) */
 typedef uint32_t spi_CrcValue_t;
 
-/** \brief Encoded pin (\ref SPI_PIN_ENCODE / \ref SPI_PIN_UNUSED) */
+/** \brief Encoded pin (value of \ref spi_SckPin_t, \ref spi_MisoPin_t, \ref spi_MosiPin_t or \ref spi_NssPin_t) */
 typedef uint32_t spi_PinCode_t;
 
 
@@ -176,25 +200,79 @@ typedef enum
 }   spi_PeriphId_t;
 
 
+/** \brief Kernel clock source identification (source part of the items of \ref spi_ClkSrc_t) */
+typedef enum
+{
+    SPI_CLK_SRC_ID_PLL1Q = 0u, /**< PLL1 output Q (SPI1 - SPI3)                                  */
+    SPI_CLK_SRC_ID_PLL2,       /**< PLL2 output P (SPI1 - SPI3) / output Q (SPI4 - SPI6)         */
+    SPI_CLK_SRC_ID_PLL3,       /**< PLL3 output P (SPI1 - SPI3) / output Q (SPI4 - SPI6)         */
+    SPI_CLK_SRC_ID_PCLK,       /**< APB clock of the peripheral (SPI4 - SPI6)                    */
+    SPI_CLK_SRC_ID_HSI,        /**< High Speed Internal oscillator (HSI) output                  */
+    SPI_CLK_SRC_ID_CSI,        /**< 4MHz Low Power Internal oscillator (CSI)                     */
+    SPI_CLK_SRC_ID_HSE,        /**< High Speed External oscillator (HSE)                         */
+    SPI_CLK_SRC_ID_CNT         /**< Count of clock sources                                       */
+}   spi_ClkSrcId_t;
+
+
 /**
- * \brief SPI kernel clock source
+ * \brief SPI kernel clock source - list of the sources of every SPI peripheral
  *
- * Available sources differ per peripheral:
+ * Available sources differ per peripheral, the list contains one item per peripheral and source:
  * - SPI1 - SPI3: PLL1Q, PLL2 (output P), PLL3 (output P, devices with PLL3)
  * - SPI4 - SPI6: PCLK, PLL2 (output Q), PLL3 (output Q, devices with PLL3), HSI, CSI, HSE
  *
- * Source not available for the peripheral is refused by Spi_Init().
+ * The item shall belong to the peripheral of the configuration (\ref spi_Config_t::PeriphId), otherwise
+ * \ref Spi_Init refuses the configuration.
  */
 typedef enum
 {
-    SPI_CLK_SRC_PLL1Q = 0u, /**< PLL1 output Q (default kernel clock of SPI1 - SPI3)           */
-    SPI_CLK_SRC_PLL2,       /**< PLL2 output P (SPI1 - SPI3) / output Q (SPI4 - SPI6)          */
-    SPI_CLK_SRC_PLL3,       /**< PLL3 output P (SPI1 - SPI3) / output Q (SPI4 - SPI6)          */
-    SPI_CLK_SRC_PCLK,       /**< APB clock of the peripheral (default kernel clock of SPI4-6)  */
-    SPI_CLK_SRC_HSI,        /**< High Speed Internal oscillator (HSI) output                   */
-    SPI_CLK_SRC_CSI,        /**< 4MHz Low Power Internal oscillator (CSI)                      */
-    SPI_CLK_SRC_HSE,        /**< High Speed External oscillator (HSE)                          */
-    SPI_CLK_SRC_CNT         /**< Count of clock sources                                        */
+#ifdef SPI1
+    SPI_CLK_SRC_SPI1_PLL1Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_1, SPI_CLK_SRC_ID_PLL1Q ), /**< SPI1 kernel clock: PLL1 output Q (default kernel clock) */
+    SPI_CLK_SRC_SPI1_PLL2P     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_1, SPI_CLK_SRC_ID_PLL2  ), /**< SPI1 kernel clock: PLL2 output P */
+#if defined(RCC_CR_PLL3ON)
+    SPI_CLK_SRC_SPI1_PLL3P     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_1, SPI_CLK_SRC_ID_PLL3  ), /**< SPI1 kernel clock: PLL3 output P */
+#endif /* RCC_CR_PLL3ON */
+#endif /* SPI1 */
+#ifdef SPI2
+    SPI_CLK_SRC_SPI2_PLL1Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_2, SPI_CLK_SRC_ID_PLL1Q ), /**< SPI2 kernel clock: PLL1 output Q (default kernel clock) */
+    SPI_CLK_SRC_SPI2_PLL2P     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_2, SPI_CLK_SRC_ID_PLL2  ), /**< SPI2 kernel clock: PLL2 output P */
+#if defined(RCC_CR_PLL3ON)
+    SPI_CLK_SRC_SPI2_PLL3P     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_2, SPI_CLK_SRC_ID_PLL3  ), /**< SPI2 kernel clock: PLL3 output P */
+#endif /* RCC_CR_PLL3ON */
+#endif /* SPI2 */
+#ifdef SPI3
+    SPI_CLK_SRC_SPI3_PLL1Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_3, SPI_CLK_SRC_ID_PLL1Q ), /**< SPI3 kernel clock: PLL1 output Q (default kernel clock) */
+    SPI_CLK_SRC_SPI3_PLL2P     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_3, SPI_CLK_SRC_ID_PLL2  ), /**< SPI3 kernel clock: PLL2 output P */
+#if defined(RCC_CR_PLL3ON)
+    SPI_CLK_SRC_SPI3_PLL3P     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_3, SPI_CLK_SRC_ID_PLL3  ), /**< SPI3 kernel clock: PLL3 output P */
+#endif /* RCC_CR_PLL3ON */
+#endif /* SPI3 */
+#ifdef SPI4
+    SPI_CLK_SRC_SPI4_PLL2Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_4, SPI_CLK_SRC_ID_PLL2  ), /**< SPI4 kernel clock: PLL2 output Q */
+#if defined(RCC_CR_PLL3ON)
+    SPI_CLK_SRC_SPI4_PLL3Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_4, SPI_CLK_SRC_ID_PLL3  ), /**< SPI4 kernel clock: PLL3 output Q */
+#endif /* RCC_CR_PLL3ON */
+    SPI_CLK_SRC_SPI4_PCLK2     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_4, SPI_CLK_SRC_ID_PCLK  ), /**< SPI4 kernel clock: APB2 clock (PCLK2, default kernel clock) */
+    SPI_CLK_SRC_SPI4_HSI       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_4, SPI_CLK_SRC_ID_HSI   ), /**< SPI4 kernel clock: HSI oscillator output */
+    SPI_CLK_SRC_SPI4_CSI       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_4, SPI_CLK_SRC_ID_CSI   ), /**< SPI4 kernel clock: CSI oscillator output (4 MHz) */
+    SPI_CLK_SRC_SPI4_HSE       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_4, SPI_CLK_SRC_ID_HSE   ), /**< SPI4 kernel clock: HSE oscillator output */
+#endif /* SPI4 */
+#ifdef SPI5
+    SPI_CLK_SRC_SPI5_PLL2Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_5, SPI_CLK_SRC_ID_PLL2  ), /**< SPI5 kernel clock: PLL2 output Q */
+    SPI_CLK_SRC_SPI5_PLL3Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_5, SPI_CLK_SRC_ID_PLL3  ), /**< SPI5 kernel clock: PLL3 output Q */
+    SPI_CLK_SRC_SPI5_PCLK3     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_5, SPI_CLK_SRC_ID_PCLK  ), /**< SPI5 kernel clock: APB3 clock (PCLK3, default kernel clock) */
+    SPI_CLK_SRC_SPI5_HSI       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_5, SPI_CLK_SRC_ID_HSI   ), /**< SPI5 kernel clock: HSI oscillator output */
+    SPI_CLK_SRC_SPI5_CSI       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_5, SPI_CLK_SRC_ID_CSI   ), /**< SPI5 kernel clock: CSI oscillator output (4 MHz) */
+    SPI_CLK_SRC_SPI5_HSE       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_5, SPI_CLK_SRC_ID_HSE   ), /**< SPI5 kernel clock: HSE oscillator output */
+#endif /* SPI5 */
+#ifdef SPI6
+    SPI_CLK_SRC_SPI6_PLL2Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_6, SPI_CLK_SRC_ID_PLL2  ), /**< SPI6 kernel clock: PLL2 output Q */
+    SPI_CLK_SRC_SPI6_PLL3Q     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_6, SPI_CLK_SRC_ID_PLL3  ), /**< SPI6 kernel clock: PLL3 output Q */
+    SPI_CLK_SRC_SPI6_PCLK2     = SPI_CLK_SRC_ENCODE( SPI_PERIPH_6, SPI_CLK_SRC_ID_PCLK  ), /**< SPI6 kernel clock: APB2 clock (PCLK2, default kernel clock) */
+    SPI_CLK_SRC_SPI6_HSI       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_6, SPI_CLK_SRC_ID_HSI   ), /**< SPI6 kernel clock: HSI oscillator output */
+    SPI_CLK_SRC_SPI6_CSI       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_6, SPI_CLK_SRC_ID_CSI   ), /**< SPI6 kernel clock: CSI oscillator output (4 MHz) */
+    SPI_CLK_SRC_SPI6_HSE       = SPI_CLK_SRC_ENCODE( SPI_PERIPH_6, SPI_CLK_SRC_ID_HSE   ), /**< SPI6 kernel clock: HSE oscillator output */
+#endif /* SPI6 */
 }   spi_ClkSrc_t;
 
 
@@ -358,6 +436,412 @@ typedef enum
 }   spi_PinSpeed_t;
 
 
+/**
+ * \brief List of SCK pins available for SPI peripherals (STM32CubeMX database, pins
+ *        existing only on some STM32H5 lines are guarded by the CMSIS device line)
+ */
+typedef enum
+{
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI1_PA2           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_4  ), /**< SPI1 SCK pin connected to PA2 */
+#endif
+    SPI_SCK_PIN_SPI1_PA5           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_5  ), /**< SPI1 SCK pin connected to PA5 */
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI1_PA8           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_12 ), /**< SPI1 SCK pin connected to PA8 */
+#endif
+    SPI_SCK_PIN_SPI1_PB3           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_B   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_5  ), /**< SPI1 SCK pin connected to PB3 */
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI1_PC0           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_5  ), /**< SPI1 SCK pin connected to PC0 */
+#endif
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI1_PC5           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_5  ), /**< SPI1 SCK pin connected to PC5 */
+#endif
+#if !defined(STM32H503xx)
+    SPI_SCK_PIN_SPI1_PG11          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_G   , GPIO_PIN_ID_11 , GPIO_ALT_FUNC_5  ), /**< SPI1 SCK pin connected to PG11 */
+#endif
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI2_PA5           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_7  ), /**< SPI2 SCK pin connected to PA5 */
+#endif
+    SPI_SCK_PIN_SPI2_PA9           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_5  ), /**< SPI2 SCK pin connected to PA9 */
+    SPI_SCK_PIN_SPI2_PA12          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_12 , GPIO_ALT_FUNC_5  ), /**< SPI2 SCK pin connected to PA12 */
+#if defined(STM32H503xx) || \
+    defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_SCK_PIN_SPI2_PB2           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_6  ), /**< SPI2 SCK pin connected to PB2 */
+#endif
+    SPI_SCK_PIN_SPI2_PB10          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_10 , GPIO_ALT_FUNC_5  ), /**< SPI2 SCK pin connected to PB10 */
+    SPI_SCK_PIN_SPI2_PB13          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_13 , GPIO_ALT_FUNC_5  ), /**< SPI2 SCK pin connected to PB13 */
+#if !defined(STM32H503xx)
+    SPI_SCK_PIN_SPI2_PD3           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_D   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_5  ), /**< SPI2 SCK pin connected to PD3 */
+#endif
+#if !defined(STM32H503xx) && \
+    !defined(STM32H523xx) && \
+    !defined(STM32H533xx) && \
+    !defined(STM32H543xx) && \
+    !defined(STM32H553xx)
+    SPI_SCK_PIN_SPI2_PI1           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_I   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_5  ), /**< SPI2 SCK pin connected to PI1 */
+#endif
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI3_PA1           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_6  ), /**< SPI3 SCK pin connected to PA1 */
+#endif
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI3_PA15          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_10 ), /**< SPI3 SCK pin connected to PA15 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_SCK_PIN_SPI3_PB1           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_4  ), /**< SPI3 SCK pin connected to PB1 */
+#endif
+    SPI_SCK_PIN_SPI3_PB3           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_6  ), /**< SPI3 SCK pin connected to PB3 */
+#if defined(STM32H503xx)
+    SPI_SCK_PIN_SPI3_PB7           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_6  ), /**< SPI3 SCK pin connected to PB7 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_SCK_PIN_SPI3_PB9           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_6  ), /**< SPI3 SCK pin connected to PB9 */
+#endif
+    SPI_SCK_PIN_SPI3_PC10          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_C   , GPIO_PIN_ID_10 , GPIO_ALT_FUNC_6  ), /**< SPI3 SCK pin connected to PC10 */
+#if defined(SPI4)
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_SCK_PIN_SPI4_PA0           = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_A   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_5  ), /**< SPI4 SCK pin connected to PA0 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_SCK_PIN_SPI4_PC5           = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_C   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_6  ), /**< SPI4 SCK pin connected to PC5 */
+#endif
+    SPI_SCK_PIN_SPI4_PE2           = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_5  ), /**< SPI4 SCK pin connected to PE2 */
+    SPI_SCK_PIN_SPI4_PE12          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_12 , GPIO_ALT_FUNC_5  ), /**< SPI4 SCK pin connected to PE12 */
+#if defined(STM32H5E5xx) || \
+    defined(STM32H5F5xx)
+    SPI_SCK_PIN_SPI4_PK5           = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_K   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_5  ), /**< SPI4 SCK pin connected to PK5 */
+#endif
+#endif /* SPI4 */
+#if defined(SPI5)
+    SPI_SCK_PIN_SPI5_PF7           = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_F   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI5 SCK pin connected to PF7 */
+    SPI_SCK_PIN_SPI5_PH6           = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_H   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_5  ), /**< SPI5 SCK pin connected to PH6 */
+#endif /* SPI5 */
+#if defined(SPI6)
+    SPI_SCK_PIN_SPI6_PA5           = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_A   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_8  ), /**< SPI6 SCK pin connected to PA5 */
+    SPI_SCK_PIN_SPI6_PB3           = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_B   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_8  ), /**< SPI6 SCK pin connected to PB3 */
+    SPI_SCK_PIN_SPI6_PC12          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_C   , GPIO_PIN_ID_12 , GPIO_ALT_FUNC_5  ), /**< SPI6 SCK pin connected to PC12 */
+    SPI_SCK_PIN_SPI6_PG13          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_G   , GPIO_PIN_ID_13 , GPIO_ALT_FUNC_5  ), /**< SPI6 SCK pin connected to PG13 */
+#endif /* SPI6 */
+    SPI_SCK_PIN_UNUSED             = SPI_PIN_UNUSED  /**< Pin is not configured by the module */
+}   spi_SckPin_t;
+
+
+/**
+ * \brief List of MISO pins available for SPI peripherals (STM32CubeMX database, pins
+ *        existing only on some STM32H5 lines are guarded by the CMSIS device line)
+ */
+typedef enum
+{
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI1_PA0          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_12 ), /**< SPI1 MISO pin connected to PA0 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI1_PA3          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_4  ), /**< SPI1 MISO pin connected to PA3 */
+#endif
+    SPI_MISO_PIN_SPI1_PA6          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_5  ), /**< SPI1 MISO pin connected to PA6 */
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI1_PA9          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_4  ), /**< SPI1 MISO pin connected to PA9 */
+#endif
+    SPI_MISO_PIN_SPI1_PB4          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_B   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_5  ), /**< SPI1 MISO pin connected to PB4 */
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI1_PC2          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_4  ), /**< SPI1 MISO pin connected to PC2 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI1_PC10         = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_10 , GPIO_ALT_FUNC_5  ), /**< SPI1 MISO pin connected to PC10 */
+#endif
+#if !defined(STM32H503xx)
+    SPI_MISO_PIN_SPI1_PG9          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_G   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_5  ), /**< SPI1 MISO pin connected to PG9 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI2_PA7          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_11 ), /**< SPI2 MISO pin connected to PA7 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI2_PA15         = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_7  ), /**< SPI2 MISO pin connected to PA15 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI2_PB5          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_6  ), /**< SPI2 MISO pin connected to PB5 */
+#endif
+    SPI_MISO_PIN_SPI2_PB14         = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_14 , GPIO_ALT_FUNC_5  ), /**< SPI2 MISO pin connected to PB14 */
+    SPI_MISO_PIN_SPI2_PC2          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_C   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_5  ), /**< SPI2 MISO pin connected to PC2 */
+#if !defined(STM32H503xx) && \
+    !defined(STM32H523xx) && \
+    !defined(STM32H533xx) && \
+    !defined(STM32H543xx) && \
+    !defined(STM32H553xx)
+    SPI_MISO_PIN_SPI2_PI2          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_I   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_5  ), /**< SPI2 MISO pin connected to PI2 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI3_PA2          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_6  ), /**< SPI3 MISO pin connected to PA2 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI3_PA4          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_10 ), /**< SPI3 MISO pin connected to PA4 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MISO_PIN_SPI3_PB0          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_5  ), /**< SPI3 MISO pin connected to PB0 */
+#endif
+    SPI_MISO_PIN_SPI3_PB4          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_6  ), /**< SPI3 MISO pin connected to PB4 */
+#if defined(STM32H503xx)
+    SPI_MISO_PIN_SPI3_PB15         = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_6  ), /**< SPI3 MISO pin connected to PB15 */
+#endif
+    SPI_MISO_PIN_SPI3_PC11         = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_C   , GPIO_PIN_ID_11 , GPIO_ALT_FUNC_6  ), /**< SPI3 MISO pin connected to PC11 */
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MISO_PIN_SPI3_PD7          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_D   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_6  ), /**< SPI3 MISO pin connected to PD7 */
+#endif
+#if defined(STM32H5E4xx) || \
+    defined(STM32H5E5xx) || \
+    defined(STM32H5F4xx) || \
+    defined(STM32H5F5xx)
+    SPI_MISO_PIN_SPI3_PF14         = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_F   , GPIO_PIN_ID_14 , GPIO_ALT_FUNC_6  ), /**< SPI3 MISO pin connected to PF14 */
+#endif
+#if defined(SPI4)
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MISO_PIN_SPI4_PB7          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_B   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI4 MISO pin connected to PB7 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MISO_PIN_SPI4_PC0          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_C   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_6  ), /**< SPI4 MISO pin connected to PC0 */
+#endif
+    SPI_MISO_PIN_SPI4_PE5          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_5  ), /**< SPI4 MISO pin connected to PE5 */
+    SPI_MISO_PIN_SPI4_PE13         = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_13 , GPIO_ALT_FUNC_5  ), /**< SPI4 MISO pin connected to PE13 */
+#if defined(STM32H5E5xx) || \
+    defined(STM32H5F5xx)
+    SPI_MISO_PIN_SPI4_PK7          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_K   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI4 MISO pin connected to PK7 */
+#endif
+#endif /* SPI4 */
+#if defined(SPI5)
+    SPI_MISO_PIN_SPI5_PF8          = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_F   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_5  ), /**< SPI5 MISO pin connected to PF8 */
+    SPI_MISO_PIN_SPI5_PH7          = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_H   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI5 MISO pin connected to PH7 */
+#endif /* SPI5 */
+#if defined(SPI6)
+    SPI_MISO_PIN_SPI6_PA6          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_A   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_8  ), /**< SPI6 MISO pin connected to PA6 */
+    SPI_MISO_PIN_SPI6_PB4          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_B   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_8  ), /**< SPI6 MISO pin connected to PB4 */
+    SPI_MISO_PIN_SPI6_PG12         = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_G   , GPIO_PIN_ID_12 , GPIO_ALT_FUNC_5  ), /**< SPI6 MISO pin connected to PG12 */
+#endif /* SPI6 */
+    SPI_MISO_PIN_UNUSED            = SPI_PIN_UNUSED  /**< Pin is not configured by the module */
+}   spi_MisoPin_t;
+
+
+/**
+ * \brief List of MOSI pins available for SPI peripherals (STM32CubeMX database, pins
+ *        existing only on some STM32H5 lines are guarded by the CMSIS device line)
+ */
+typedef enum
+{
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI1_PA4          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_4  ), /**< SPI1 MOSI pin connected to PA4 */
+#endif
+    SPI_MOSI_PIN_SPI1_PA7          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI1 MOSI pin connected to PA7 */
+    SPI_MOSI_PIN_SPI1_PB5          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_B   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_5  ), /**< SPI1 MOSI pin connected to PB5 */
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI1_PB15         = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_B   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_6  ), /**< SPI1 MOSI pin connected to PB15 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI1_PC3          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_4  ), /**< SPI1 MOSI pin connected to PC3 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI1_PC7          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI1 MOSI pin connected to PC7 */
+#endif
+#if !defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI1_PD7          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_D   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_5  ), /**< SPI1 MOSI pin connected to PD7 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI2_PA8          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_6  ), /**< SPI2 MOSI pin connected to PA8 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI2_PB1          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_6  ), /**< SPI2 MOSI pin connected to PB1 */
+#endif
+    SPI_MOSI_PIN_SPI2_PB15         = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_5  ), /**< SPI2 MOSI pin connected to PB15 */
+    SPI_MOSI_PIN_SPI2_PC1          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_C   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_5  ), /**< SPI2 MOSI pin connected to PC1 */
+    SPI_MOSI_PIN_SPI2_PC3          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_C   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_5  ), /**< SPI2 MOSI pin connected to PC3 */
+#if !defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI2_PG1          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_G   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_7  ), /**< SPI2 MOSI pin connected to PG1 */
+#endif
+#if !defined(STM32H503xx) && \
+    !defined(STM32H523xx) && \
+    !defined(STM32H533xx) && \
+    !defined(STM32H543xx) && \
+    !defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI2_PI3          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_I   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_5  ), /**< SPI2 MOSI pin connected to PI3 */
+#endif
+#if defined(STM32H503xx) || \
+    defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI3_PA3          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_6  ), /**< SPI3 MOSI pin connected to PA3 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI3_PA4          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_4  ), /**< SPI3 MOSI pin connected to PA4 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI3_PA5          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_10 ), /**< SPI3 MOSI pin connected to PA5 */
+#endif
+#if defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI3_PA9          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_10 ), /**< SPI3 MOSI pin connected to PA9 */
+#endif
+    SPI_MOSI_PIN_SPI3_PB2          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_7  ), /**< SPI3 MOSI pin connected to PB2 */
+    SPI_MOSI_PIN_SPI3_PB5          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_7  ), /**< SPI3 MOSI pin connected to PB5 */
+    SPI_MOSI_PIN_SPI3_PC12         = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_C   , GPIO_PIN_ID_12 , GPIO_ALT_FUNC_6  ), /**< SPI3 MOSI pin connected to PC12 */
+#if !defined(STM32H503xx)
+    SPI_MOSI_PIN_SPI3_PD6          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_D   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_5  ), /**< SPI3 MOSI pin connected to PD6 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI3_PG8          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_G   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_5  ), /**< SPI3 MOSI pin connected to PG8 */
+#endif
+#if defined(SPI4)
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI4_PA8          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_A   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_6  ), /**< SPI4 MOSI pin connected to PA8 */
+#endif
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_MOSI_PIN_SPI4_PC1          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_C   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_6  ), /**< SPI4 MOSI pin connected to PC1 */
+#endif
+    SPI_MOSI_PIN_SPI4_PE6          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_5  ), /**< SPI4 MOSI pin connected to PE6 */
+    SPI_MOSI_PIN_SPI4_PE14         = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_14 , GPIO_ALT_FUNC_5  ), /**< SPI4 MOSI pin connected to PE14 */
+#if defined(STM32H5E5xx) || \
+    defined(STM32H5F5xx)
+    SPI_MOSI_PIN_SPI4_PK8          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_K   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_5  ), /**< SPI4 MOSI pin connected to PK8 */
+#endif
+#endif /* SPI4 */
+#if defined(SPI5)
+    SPI_MOSI_PIN_SPI5_PF9          = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_F   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_5  ), /**< SPI5 MOSI pin connected to PF9 */
+    SPI_MOSI_PIN_SPI5_PF11         = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_F   , GPIO_PIN_ID_11 , GPIO_ALT_FUNC_5  ), /**< SPI5 MOSI pin connected to PF11 */
+    SPI_MOSI_PIN_SPI5_PH8          = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_H   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_5  ), /**< SPI5 MOSI pin connected to PH8 */
+#endif /* SPI5 */
+#if defined(SPI6)
+    SPI_MOSI_PIN_SPI6_PA7          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_A   , GPIO_PIN_ID_7  , GPIO_ALT_FUNC_8  ), /**< SPI6 MOSI pin connected to PA7 */
+    SPI_MOSI_PIN_SPI6_PB5          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_B   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_8  ), /**< SPI6 MOSI pin connected to PB5 */
+    SPI_MOSI_PIN_SPI6_PG14         = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_G   , GPIO_PIN_ID_14 , GPIO_ALT_FUNC_5  ), /**< SPI6 MOSI pin connected to PG14 */
+#endif /* SPI6 */
+    SPI_MOSI_PIN_UNUSED            = SPI_PIN_UNUSED  /**< Pin is not configured by the module */
+}   spi_MosiPin_t;
+
+
+/**
+ * \brief List of NSS pins available for SPI peripherals (STM32CubeMX database, pins
+ *        existing only on some STM32H5 lines are guarded by the CMSIS device line)
+ */
+typedef enum
+{
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI1_PA1           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_4  ), /**< SPI1 NSS pin connected to PA1 */
+#endif
+    SPI_NSS_PIN_SPI1_PA4           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_5  ), /**< SPI1 NSS pin connected to PA4 */
+    SPI_NSS_PIN_SPI1_PA15          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_A   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_5  ), /**< SPI1 NSS pin connected to PA15 */
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI1_PB8           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_B   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_12 ), /**< SPI1 NSS pin connected to PB8 */
+#endif
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI1_PC1           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_4  ), /**< SPI1 NSS pin connected to PC1 */
+#endif
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI1_PC8           = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_C   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_5  ), /**< SPI1 NSS pin connected to PC8 */
+#endif
+#if !defined(STM32H503xx)
+    SPI_NSS_PIN_SPI1_PG10          = SPI_PIN_ENCODE( SPI_PERIPH_1 , GPIO_PORT_G   , GPIO_PIN_ID_10 , GPIO_ALT_FUNC_5  ), /**< SPI1 NSS pin connected to PG10 */
+#endif
+    SPI_NSS_PIN_SPI2_PA3           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_3  , GPIO_ALT_FUNC_5  ), /**< SPI2 NSS pin connected to PA3 */
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI2_PA8           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_11 ), /**< SPI2 NSS pin connected to PA8 */
+#endif
+    SPI_NSS_PIN_SPI2_PA11          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_A   , GPIO_PIN_ID_11 , GPIO_ALT_FUNC_5  ), /**< SPI2 NSS pin connected to PA11 */
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_NSS_PIN_SPI2_PB1           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_1  , GPIO_ALT_FUNC_5  ), /**< SPI2 NSS pin connected to PB1 */
+#endif
+    SPI_NSS_PIN_SPI2_PB4           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_7  ), /**< SPI2 NSS pin connected to PB4 */
+#if !defined(STM32H503xx)
+    SPI_NSS_PIN_SPI2_PB9           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_5  ), /**< SPI2 NSS pin connected to PB9 */
+#endif
+    SPI_NSS_PIN_SPI2_PB12          = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_B   , GPIO_PIN_ID_12 , GPIO_ALT_FUNC_5  ), /**< SPI2 NSS pin connected to PB12 */
+#if !defined(STM32H503xx) && \
+    !defined(STM32H523xx) && \
+    !defined(STM32H533xx) && \
+    !defined(STM32H543xx) && \
+    !defined(STM32H553xx)
+    SPI_NSS_PIN_SPI2_PI0           = SPI_PIN_ENCODE( SPI_PERIPH_2 , GPIO_PORT_I   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_5  ), /**< SPI2 NSS pin connected to PI0 */
+#endif
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI3_PA0           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_10 ), /**< SPI3 NSS pin connected to PA0 */
+#endif
+    SPI_NSS_PIN_SPI3_PA4           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_6  ), /**< SPI3 NSS pin connected to PA4 */
+    SPI_NSS_PIN_SPI3_PA15          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_A   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_6  ), /**< SPI3 NSS pin connected to PA15 */
+#if defined(STM32H523xx) || \
+    defined(STM32H533xx) || \
+    defined(STM32H543xx) || \
+    defined(STM32H553xx)
+    SPI_NSS_PIN_SPI3_PB8           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_6  ), /**< SPI3 NSS pin connected to PB8 */
+#endif
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI3_PB10          = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_B   , GPIO_PIN_ID_10 , GPIO_ALT_FUNC_6  ), /**< SPI3 NSS pin connected to PB10 */
+#endif
+#if defined(STM32H503xx)
+    SPI_NSS_PIN_SPI3_PD2           = SPI_PIN_ENCODE( SPI_PERIPH_3 , GPIO_PORT_D   , GPIO_PIN_ID_2  , GPIO_ALT_FUNC_6  ), /**< SPI3 NSS pin connected to PD2 */
+#endif
+#if defined(SPI4)
+    SPI_NSS_PIN_SPI4_PE4           = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_5  ), /**< SPI4 NSS pin connected to PE4 */
+    SPI_NSS_PIN_SPI4_PE11          = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_E   , GPIO_PIN_ID_11 , GPIO_ALT_FUNC_5  ), /**< SPI4 NSS pin connected to PE11 */
+#if defined(STM32H5E5xx) || \
+    defined(STM32H5F5xx)
+    SPI_NSS_PIN_SPI4_PK6           = SPI_PIN_ENCODE( SPI_PERIPH_4 , GPIO_PORT_K   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_5  ), /**< SPI4 NSS pin connected to PK6 */
+#endif
+#endif /* SPI4 */
+#if defined(SPI5)
+    SPI_NSS_PIN_SPI5_PF6           = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_F   , GPIO_PIN_ID_6  , GPIO_ALT_FUNC_5  ), /**< SPI5 NSS pin connected to PF6 */
+    SPI_NSS_PIN_SPI5_PH5           = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_H   , GPIO_PIN_ID_5  , GPIO_ALT_FUNC_5  ), /**< SPI5 NSS pin connected to PH5 */
+    SPI_NSS_PIN_SPI5_PH9           = SPI_PIN_ENCODE( SPI_PERIPH_5 , GPIO_PORT_H   , GPIO_PIN_ID_9  , GPIO_ALT_FUNC_5  ), /**< SPI5 NSS pin connected to PH9 */
+#endif /* SPI5 */
+#if defined(SPI6)
+    SPI_NSS_PIN_SPI6_PA0           = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_A   , GPIO_PIN_ID_0  , GPIO_ALT_FUNC_5  ), /**< SPI6 NSS pin connected to PA0 */
+    SPI_NSS_PIN_SPI6_PA4           = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_A   , GPIO_PIN_ID_4  , GPIO_ALT_FUNC_8  ), /**< SPI6 NSS pin connected to PA4 */
+    SPI_NSS_PIN_SPI6_PA15          = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_A   , GPIO_PIN_ID_15 , GPIO_ALT_FUNC_7  ), /**< SPI6 NSS pin connected to PA15 */
+    SPI_NSS_PIN_SPI6_PG8           = SPI_PIN_ENCODE( SPI_PERIPH_6 , GPIO_PORT_G   , GPIO_PIN_ID_8  , GPIO_ALT_FUNC_5  ), /**< SPI6 NSS pin connected to PG8 */
+#endif /* SPI6 */
+    SPI_NSS_PIN_UNUSED             = SPI_PIN_UNUSED  /**< Pin is not configured by the module */
+}   spi_NssPin_t;
+
+
 /** DMA peripherals enumeration list */
 typedef enum
 {
@@ -499,7 +983,7 @@ typedef struct
 typedef struct
 {
     spi_PeriphId_t           PeriphId;    /**< SPI peripheral identification                                  */
-    spi_ClkSrc_t             ClkSrc;      /**< SPI kernel clock source                                        */
+    spi_ClkSrc_t             ClkSrc;      /**< SPI kernel clock source (item of the peripheral PeriphId)      */
     spi_Mode_t               Mode;        /**< Master / slave                                                 */
     spi_FreqHz_t             BusFreq;     /**< Required SCK frequency in Hz (master only). The closest lower
                                                frequency reachable by the prescaler is used                   */
@@ -513,10 +997,10 @@ typedef struct
     const spi_DataConfig_t  *DataConfig;  /**< Data handling configuration (copied). SPI_NULL_PTR - data
                                                handling is not initialized                                   */
 
-    spi_PinCode_t            SckPin;      /**< SCK pin of PeriphId (SPI_PIN_UNUSED - not configured)          */
-    spi_PinCode_t            MisoPin;     /**< MISO pin of PeriphId (SPI_PIN_UNUSED - not configured)         */
-    spi_PinCode_t            MosiPin;     /**< MOSI pin of PeriphId (SPI_PIN_UNUSED - not configured)         */
-    spi_PinCode_t            NssPin;      /**< NSS pin of PeriphId (SPI_PIN_UNUSED - not configured)          */
+    spi_SckPin_t             SckPin;      /**< SCK pin of PeriphId (SPI_SCK_PIN_UNUSED - not configured)      */
+    spi_MisoPin_t            MisoPin;     /**< MISO pin of PeriphId (SPI_MISO_PIN_UNUSED - not configured)    */
+    spi_MosiPin_t            MosiPin;     /**< MOSI pin of PeriphId (SPI_MOSI_PIN_UNUSED - not configured)    */
+    spi_NssPin_t             NssPin;      /**< NSS pin of PeriphId (SPI_NSS_PIN_UNUSED - not configured)      */
     spi_PinSpeed_t           PinSpeed;    /**< Output speed of SPI pins                                       */
 }   spi_Config_t;
 

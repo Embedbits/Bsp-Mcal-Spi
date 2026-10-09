@@ -27,4 +27,5 @@ UnitTesting_Add_Test(
     FORCE_INCLUDES  ${UNIT_TESTING_CMSIS_HOST_HEADER}   # Replaces cmsis_gcc.h
     HOST_LIBS       Ral_Lib                             # ST LL compiled for host
     COVERAGE_EXCLUDE ".*/Ral/.*"
+    RUN_SERIAL                                          # HW model thread (mode fault)
 )
