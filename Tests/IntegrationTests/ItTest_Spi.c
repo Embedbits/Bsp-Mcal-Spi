@@ -127,14 +127,18 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
 /** Bus frequency of DMA transfers [Hz] */
 #define IT_SPI_FAST_FREQ_HZ                 ( 6000000u )
 
-/** Bus frequency of polled master half-duplex reception [Hz] (frame longer than Spi_Task()) */
-#define IT_SPI_SLOW_FREQ_HZ                 ( 400000u )
+/** Bus frequency of polled master half-duplex reception [Hz] (frame longer than Spi_Task()), not lower
+ *  than the lowest bus frequency (APB clock / 256 = 421.9 kHz at 108 MHz of APB2) */
+#define IT_SPI_SLOW_FREQ_HZ                 ( 500000u )
 
 /** Size of transfer buffers (bytes) */
 #define IT_SPI_BUFFER_SIZE                  ( 32u )
 
 /** Count of frames of half-duplex reception tests */
 #define IT_SPI_HALF_RX_FRAMES               ( 3u )
+
+/** Count of frames of the overrun test (receive FIFO holds 4 frames of 8 bits - the 5th frame overruns) */
+#define IT_SPI_OVERRUN_FRAMES               ( 5u )
 
 /** CRC-8 polynomials x^8 + x^2 + x + 1 / x^8 + x^5 + x^4 + 1 */
 #define IT_SPI_CRC8_POLY                    ( 0x07u )
@@ -287,8 +291,8 @@ void It_Spi_Poll_FullDuplex_DataExchanged( void )
 /**
  * \brief   Slave which does not read received frames reports overrun.
  *
- * \details Master transfers 4 frames by interrupts, polled slave transfer is not serviced
- *          (Spi_Task() is not called) until the master finished.
+ * \details Master transfers 5 frames by interrupts (one more than the receive FIFO holds), polled
+ *          slave transfer is not serviced (Spi_Task() is not called) until the master finished.
  *
  * \par Expected results
  * - Master completes, slave reports SPI_XFER_ERROR_OVERRUN with the next Spi_Task() call.
@@ -302,8 +306,8 @@ void It_Spi_Poll_SlaveNotServiced_OverrunReported( void )
     It_Spi_Init( &master, SPI_XFER_MODE_ISR );
     It_Spi_Init( &slave, SPI_XFER_MODE_POLL );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, 4u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, 4u );
+    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_OVERRUN_FRAMES );
+    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_OVERRUN_FRAMES );
 
     for( uint32_t loopCnt = 0u;
          ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
