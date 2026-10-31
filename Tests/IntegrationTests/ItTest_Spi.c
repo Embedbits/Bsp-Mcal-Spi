@@ -13,6 +13,9 @@
  * SPI1 (master) and SPI2 (slave) of the board are wired together (SCK - SCK, MISO -
  * MISO, MOSI - MOSI, pins of the boards in the board blocks below; Nucleo-64:
  * SCK PA5 - PB13, MISO PA6 - PC2, MOSI PA7 - PC3). The slave uses software NSS.
+ * Fixture of the board (EmBi_Platform IntegrationTesting, "Board fixtures"): the
+ * wiring is feature SPI1_SPI2_LOOP - the master + slave tests are ignored on a board
+ * with a fixture without it (a board without a fixture is expected to be wired).
  * The slave transfer is started before the master transfer. Master transfers
  * without gaps between frames (simplex / half-duplex) are received by the slave
  * by DMA - interrupts of both peripherals would share one CPU.
@@ -53,6 +56,7 @@ static void         It_Spi_Start            ( spi_PeriphId_t periphId, const uin
 static void         It_Spi_Wait             ( spi_PeriphId_t periphId );
 static void         It_Spi_ExpectComplete   ( spi_PeriphId_t periphId, uint32_t completeCnt );
 static void         It_Spi_Delay            ( uint32_t loopCnt );
+static void         It_Spi_RequireLoop      ( void );
 static void         It_Spi_MasterComplete   ( void );
 static void         It_Spi_MasterError      ( spi_XferErrorId_t errorId );
 static void         It_Spi_SlaveComplete    ( void );
@@ -348,6 +352,8 @@ void It_Spi_Poll_FullDuplex_DataExchanged( void )
     spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
 
+    It_Spi_RequireLoop();
+
     It_Spi_Init( &master, SPI_XFER_MODE_POLL );
     It_Spi_Init( &slave, SPI_XFER_MODE_POLL );
 
@@ -383,6 +389,8 @@ void It_Spi_Poll_SlaveNotServiced_OverrunReported( void )
     spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
 
+    It_Spi_RequireLoop();
+
     slave.Direction = SPI_DIRECTION_SIMPLEX_RX;
 
     It_Spi_Init( &master, SPI_XFER_MODE_ISR );
@@ -391,7 +399,10 @@ void It_Spi_Poll_SlaveNotServiced_OverrunReported( void )
     It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
     It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
 
-    for( uint32_t loopCnt = 0u; ( IT_SPI_WAIT_LOOPS > loopCnt ) && ( SPI_FUNCTION_INACTIVE != xferState ); loopCnt++ )
+    for( uint32_t loopCnt = 0u;
+         ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
+         ( SPI_FUNCTION_INACTIVE != xferState );
+         loopCnt++ )
     {
         (void)Spi_Get_XferState( IT_SPI_MASTER, &xferState );
     }
@@ -421,6 +432,8 @@ void It_Spi_Poll_MasterHalfDuplexRx_ExactFrameCount( void )
     spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_INACTIVE;
+
+    It_Spi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     master.ClkSrc    = IT_SPI_SLOW_CLK_SRC;
@@ -462,6 +475,8 @@ void It_Spi_Isr_FullDuplex16BitLsbFirst_DataExchanged( void )
     spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
 
+    It_Spi_RequireLoop();
+
     master.DataSize  = SPI_DATA_SIZE_16BIT;
     master.BitOrder  = SPI_BIT_ORDER_LSB_FIRST;
     master.ClockMode = SPI_CLOCK_MODE_1;
@@ -495,6 +510,8 @@ void It_Spi_Isr_Simplex_DataTransferred( void )
 {
     spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+
+    It_Spi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_SIMPLEX_TX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
@@ -534,6 +551,8 @@ void It_Spi_Isr_MasterHalfDuplexTx_SlaveReceives( void )
     spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
 
+    It_Spi_RequireLoop();
+
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
 
@@ -566,6 +585,8 @@ void It_Spi_Isr_MasterHalfDuplexRx_ExactFrameCount( void )
     spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_INACTIVE;
+
+    It_Spi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
@@ -642,6 +663,8 @@ void It_Spi_Dma_FullDuplex_DataExchanged( void )
     spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
 
+    It_Spi_RequireLoop();
+
     master.BusFreq = IT_SPI_FAST_FREQ_HZ;
 
     It_Spi_Init( &master, SPI_XFER_MODE_DMA );
@@ -695,6 +718,8 @@ void It_Spi_Dma_Crc_CheckedByReceiver( void )
     spi_CrcValue_t  slaveTx   = 0u;
     spi_CrcValue_t  slaveRx   = 0u;
 
+    It_Spi_RequireLoop();
+
     It_Spi_Init( &master, SPI_XFER_MODE_DMA );
     It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_CrcConfig( IT_SPI_MASTER, &crcConfig ) );
@@ -743,6 +768,8 @@ void It_Spi_Dma_SlaveHalfDuplexTx16Bit_MasterReceives( void )
     spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
 
+    It_Spi_RequireLoop();
+
     master.DataSize = SPI_DATA_SIZE_16BIT;
     slave.DataSize  = SPI_DATA_SIZE_16BIT;
     slave.Direction = SPI_DIRECTION_HALF_DUPLEX;
@@ -776,6 +803,8 @@ void It_Spi_Dma_MasterHalfDuplexRx_ExactFrameCount( void )
     spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
     spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_INACTIVE;
+
+    It_Spi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
@@ -821,6 +850,8 @@ void It_Spi_Dma_HardNss_ActiveDuringTransfer( void )
     spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
     uint32_t            nssLow    = 0u;
 
+    It_Spi_RequireLoop();
+
     master.NssConfig.Mode = SPI_NSS_MODE_HARD;
     master.NssPin         = IT_SPI_MASTER_NSS;
 
@@ -833,7 +864,10 @@ void It_Spi_Dma_HardNss_ActiveDuringTransfer( void )
     It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
     It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
 
-    for( uint32_t loopCnt = 0u; ( IT_SPI_WAIT_LOOPS > loopCnt ) && ( SPI_FUNCTION_INACTIVE != xferState ); loopCnt++ )
+    for( uint32_t loopCnt = 0u;
+         ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
+         ( SPI_FUNCTION_INACTIVE != xferState );
+         loopCnt++ )
     {
         if( 0u == ( IT_SPI_MASTER_NSS_PORT->IDR & ( 1u << IT_SPI_MASTER_NSS_PIN ) ) )
         {
@@ -906,7 +940,16 @@ static spi_Config_t It_Spi_Get_Config( spi_PeriphId_t periphId )
  */
 static void It_Spi_Init( spi_Config_t * const config, spi_XferMode_t xferMode )
 {
-    spi_DataConfig_t * const dataConfig = ( IT_SPI_MASTER == config->PeriphId ) ? &itSpi_MasterData : &itSpi_SlaveData;
+    spi_DataConfig_t * dataConfig = &itSpi_SlaveData;
+
+    if( IT_SPI_MASTER == config->PeriphId )
+    {
+        dataConfig = &itSpi_MasterData;
+    }
+    else
+    {
+        dataConfig = &itSpi_SlaveData;
+    }
 
     dataConfig->XferMode      = xferMode;
     dataConfig->IrqPriority   = IT_SPI_IRQ_PRIO;
@@ -964,14 +1007,28 @@ static void It_Spi_Wait( spi_PeriphId_t periphId )
 {
     spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
 
-    for( uint32_t loopCnt = 0u; ( IT_SPI_WAIT_LOOPS > loopCnt ) && ( SPI_FUNCTION_INACTIVE != xferState ); loopCnt++ )
+    for( uint32_t loopCnt = 0u;
+         ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
+         ( SPI_FUNCTION_INACTIVE != xferState );
+         loopCnt++ )
     {
         Spi_Task();
 
         (void)Spi_Get_XferState( periphId, &xferState );
     }
 
-    UNITY_TEST_ASSERT_EQUAL_INT( SPI_FUNCTION_INACTIVE, xferState, __LINE__, ( IT_SPI_MASTER == periphId ) ? "Master transfer not finished" : "Slave transfer not finished" );
+    const char * message = "Slave transfer not finished";
+
+    if( IT_SPI_MASTER == periphId )
+    {
+        message = "Master transfer not finished";
+    }
+    else
+    {
+        message = "Slave transfer not finished";
+    }
+
+    UNITY_TEST_ASSERT_EQUAL_INT( SPI_FUNCTION_INACTIVE, xferState, __LINE__, message );
 }
 
 
@@ -983,8 +1040,19 @@ static void It_Spi_Wait( spi_PeriphId_t periphId )
  */
 static void It_Spi_ExpectComplete( spi_PeriphId_t periphId, uint32_t completeCnt )
 {
-    const itSpi_Events_t * const events = ( IT_SPI_MASTER == periphId ) ? &itSpi_Master : &itSpi_Slave;
-    const char * const           name   = ( IT_SPI_MASTER == periphId ) ? "Master" : "Slave";
+    const itSpi_Events_t * events = &itSpi_Slave;
+    const char *           name   = "Slave";
+
+    if( IT_SPI_MASTER == periphId )
+    {
+        events = &itSpi_Master;
+        name   = "Master";
+    }
+    else
+    {
+        events = &itSpi_Slave;
+        name   = "Slave";
+    }
 
     UNITY_TEST_ASSERT_EQUAL_INT( SPI_XFER_ERROR_NONE, events->LastError, __LINE__, name );
     UNITY_TEST_ASSERT_EQUAL_UINT32( 0u, events->ErrorCnt, __LINE__, name );
@@ -1003,6 +1071,24 @@ static void It_Spi_Delay( uint32_t loopCnt )
     {
         /* Waiting */
     }
+}
+
+
+/**
+ * \brief   Ignores the test on a board whose SPI1 is not wired to SPI2.
+ *
+ * \details Fixture of the board (EmBi_Platform, IntegrationTesting README "Board fixtures"):
+ *          feature SPI1_SPI2_LOOP. A board without a fixture (IT_FIXTURE not defined) is
+ *          expected to have the wiring.
+ */
+static void It_Spi_RequireLoop( void )
+{
+#if defined(IT_FEATURE_SPI1_SPI2_LOOP) || \
+    !defined(IT_FIXTURE)
+    /* SPI1 and SPI2 are wired together */
+#else
+    TEST_IGNORE_MESSAGE( "Board without the fixture SPI1_SPI2_LOOP (SPI1 wired to SPI2)" );
+#endif
 }
 
 
