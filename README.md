@@ -209,3 +209,7 @@ Contributions are welcome! Please open a pull request.
 
 SPI1 (master) and SPI2 (slave) are wired together on the board: SCK PA5 - PB13, MISO PA6 - PC2,
 MOSI PA7 - PC3 (NUCLEO-U545RE-Q, NUCLEO-U575ZI-Q, NUCLEO-U5A5ZJ-Q). The slave uses software NSS.
+The wiring is the fixture feature `SPI1_SPI2_LOOP` of the board (EmBi_Platform `IntegrationTesting`, board
+fixtures): on a board with a fixture without it the 12 master + slave tests are ignored, a board without a fixture
+is expected to be wired. The board `STM32U5A5xJ_SpiLoop` (NUCLEO-U5A5ZJ-Q on the IT agent) has an own pin block
+`IT_BOARD_STM32U5A5xJ_SpiLoop`.
