@@ -193,6 +193,7 @@ const spi_XferRequest_t request =
   - Nucleo-64 / Nucleo-144 (NUCLEO-L476RG, L496ZG(-P), L4A6ZG, L4P5ZG, L4R5ZI(-P)): PA5 - PB13 (SCK), PA6 - PC2 (MISO), PA7 - PC3 (MOSI), master NSS PA4
   - NUCLEO-L432KC / L433RC-P, NUCLEO-L452RE / L452RE-P: PA1 - PB3, PA11 - PB4, PA12 - PB5 (slave SPI3), master NSS PB0
   - NUCLEO-L412RB-P: PA1 - PB10, PA11 - PC2, PA12 - PC3, master NSS PB0; NUCLEO-L412KB has no slave pins - tests with the slave are ignored (package read at run time)
+  - The wiring is the fixture feature `SPI1_SPI2_LOOP` of the board (EmBi_Platform IntegrationTesting, inventory of EmBi_Tester; NUCLEO-L4R5ZI is the STM32L4 board with the fixture): on a board with a fixture without it the 16 master + slave tests are ignored (`ItSpi_RequireLoop()`); a board without a fixture is expected to be wired.
 
 ---
 
