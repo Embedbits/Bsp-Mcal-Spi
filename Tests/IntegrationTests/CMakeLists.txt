@@ -4,9 +4,9 @@
 # IntegrationTesting_Generate() in "IntegrationTest" build
 # (see EmBi_Platform/CMake/IntegrationTesting/README.md).
 #
-# SPI5 (master) and SPI2 (slave) are wired together: 32F746GDISCOVERY SCK PF7 (A4) -
-# PI1 (D13), MISO PF8 (A3) - PB14 (D12), MOSI PF9 (A2) - PB15 (D11); Nucleo-144 SCK
-# PF7 - PB10, MISO PF8 - PC2, MOSI PF9 - PC3.
+# The master and SPI2 (slave) are wired together: 32F746GDISCOVERY SPI5 SCK PF7 (A4) -
+# PI1 (D13), MISO PF8 (A3) - PB14 (D12), MOSI PF9 (A2) - PB15 (D11); Nucleo-144 SPI1 SCK
+# PA5 - PB13, MISO PA6 - PC2, MOSI PA7 - PC3 (fixture feature SPI1_SPI2_LOOP).
 #
 # The test set is independent - target interface (entry point, initialization,
 # fault handlers, system reset) is implemented by ItTarget_Spi.c and

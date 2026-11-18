@@ -205,6 +205,12 @@ const spi_XferRequest_t request =
 
 ---
 
+## Integration Tests
+
+`Tests/IntegrationTests` run on a board (EmBi_Platform `CMake/IntegrationTesting`). The master SPI is wired to SPI2 (slave) - SCK, MISO and MOSI, pins per board in `ItTest_Spi.c`: Nucleo-144 (NUCLEO-F722ZE, wired on the IT agent) SPI1 PA5 - PB13, PA6 - PC2, PA7 - PC3 (master NSS PA4, not wired), 32F746GDISCOVERY SPI5 PF7 - PI1, PF8 - PB14, PF9 - PB15. The wiring is the fixture feature `SPI1_SPI2_LOOP` of the board: on a board with a fixture without it the master + slave tests are ignored; a board without a fixture is expected to be wired.
+
+---
+
 ## 🛠 CMake Integration
 
 ```cmake
