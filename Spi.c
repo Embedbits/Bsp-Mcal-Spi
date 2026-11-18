@@ -104,6 +104,7 @@ static spi_RequestState_t  Spi_Check_DataConfig     ( spi_PeriphId_t periphId, c
 
 static spi_RequestState_t  Spi_Set_Enable           ( spi_PeriphId_t periphId, spi_FunctionState_t enableState );
 static spi_RequestState_t  Spi_Set_SsLevel          ( spi_PeriphId_t periphId );
+static spi_RequestState_t  Spi_Set_SsLevelForMode   ( spi_PeriphId_t periphId, spi_Mode_t mode );
 static spi_RequestState_t  Spi_Set_Pin              ( spi_PinCode_t pinCode, spi_PinSpeed_t pinSpeed );
 static spi_RequestState_t  Spi_Get_KernelClk        ( spi_PeriphId_t periphId, spi_FreqHz_t * const clkFreq );
 static spi_FrameBytes_t    Spi_Get_FrameBytes       ( spi_DataSize_t dataSize );
@@ -453,7 +454,18 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
         }
 
         /*------------- Peripheral configuration (SPE = 0 after reset) -------*/
-        /* Role first - alternate function control keeps master pins driven from now on */
+        /* Software / hardware NSS first - the reset value is the hardware NSS input, which is low while the NSS pin
+         * is not an alternate function, and a master with the active NSS input is a mode fault */
+        if( SPI_REQUEST_OK == retState )
+        {
+            retState = Spi_Set_NssConfig( periphId, &spiConfig->NssConfig );
+        }
+        else
+        {
+            /* Error during initialization process */
+        }
+
+        /* Role - alternate function control keeps master pins driven from now on */
         if( SPI_REQUEST_OK == retState )
         {
             retState = Spi_Set_Mode( periphId, spiConfig->Mode );
@@ -502,15 +514,6 @@ spi_RequestState_t Spi_Init( const spi_Config_t * const spiConfig )
         if( SPI_REQUEST_OK == retState )
         {
             retState = Spi_Set_Direction( periphId, spiConfig->Direction );
-        }
-        else
-        {
-            /* Error during initialization process */
-        }
-
-        if( SPI_REQUEST_OK == retState )
-        {
-            retState = Spi_Set_NssConfig( periphId, &spiConfig->NssConfig );
         }
         else
         {
@@ -804,7 +807,18 @@ spi_RequestState_t Spi_Set_Mode( spi_PeriphId_t periphId, spi_Mode_t mode )
             /* Slave - pins are released while the peripheral is disabled */
         }
 
-        retState = Spi_Set_RegField( &periphReg->CFG2, SPI_CFG2_MODE_MASK, modeValue );
+        /* Internal slave select level of the new role first - a master with the internal slave select at the
+         * active level is a mode fault, which clears the MASTER bit */
+        retState = Spi_Set_SsLevelForMode( periphId, mode );
+
+        if( SPI_REQUEST_OK == retState )
+        {
+            retState = Spi_Set_RegField( &periphReg->CFG2, SPI_CFG2_MODE_MASK, modeValue );
+        }
+        else
+        {
+            /* Internal slave select level could not be set */
+        }
 
         /* Internal slave select level depends on the role */
         if( SPI_REQUEST_OK == retState )
@@ -3041,11 +3055,12 @@ static spi_RequestState_t Spi_Set_Enable( spi_PeriphId_t periphId, spi_FunctionS
  *        selected by another master (no mode fault), slave is permanently selected
  *
  * \param periphId [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
+ * \param mode     [in]: Role the level is set for
  *
  * \return Function processing state. Returns \ref SPI_REQUEST_OK if request
  *         was processed without problems. Otherwise returns \ref SPI_REQUEST_ERROR.
  */
-static spi_RequestState_t Spi_Set_SsLevel( spi_PeriphId_t periphId )
+static spi_RequestState_t Spi_Set_SsLevelForMode( spi_PeriphId_t periphId, spi_Mode_t mode )
 {
     spi_RequestState_t retState = SPI_REQUEST_ERROR;
 
@@ -3053,9 +3068,18 @@ static spi_RequestState_t Spi_Set_SsLevel( spi_PeriphId_t periphId )
     {
         SPI_TypeDef * const  periphReg = spi_PeriphConf[ periphId ].PeriphReg;
         const spi_RegValue_t cfgValue  = LL_SPI_ReadReg( periphReg, CFG2 );
-        const spi_RegValue_t isMaster  = cfgValue & SPI_CFG2_MASTER;
+        spi_RegValue_t       isMaster  = 0u;
         const spi_RegValue_t activeHi  = cfgValue & SPI_CFG2_SSIOP;
         spi_RegValue_t       ssiValue  = 0u;
+
+        if( SPI_MODE_MASTER == mode )
+        {
+            isMaster = 1u;
+        }
+        else
+        {
+            /* Slave */
+        }
 
         /* Master: SSI = inactive level, slave: SSI = active level */
         if( ( ( 0u != isMaster ) &&
@@ -3071,6 +3095,43 @@ static spi_RequestState_t Spi_Set_SsLevel( spi_PeriphId_t periphId )
         }
 
         retState = Spi_Set_RegField( &periphReg->CR1, SPI_CR1_SSI, ssiValue );
+    }
+    else
+    {
+        retState = SPI_REQUEST_ERROR;
+    }
+
+    return ( retState );
+}
+
+
+/**
+ * \brief Configures internal slave select level (SSI) for the current role (MASTER bit)
+ *
+ * \param periphId [in]: SPI peripheral identification, value from \ref spi_PeriphId_t
+ *
+ * \return Function processing state. Returns \ref SPI_REQUEST_OK if request
+ *         was processed without problems. Otherwise returns \ref SPI_REQUEST_ERROR.
+ */
+static spi_RequestState_t Spi_Set_SsLevel( spi_PeriphId_t periphId )
+{
+    spi_RequestState_t retState = SPI_REQUEST_ERROR;
+
+    if( SPI_PERIPH_CNT > periphId )
+    {
+        spi_Mode_t           mode     = SPI_MODE_SLAVE;
+        const spi_RegValue_t cfgValue = LL_SPI_ReadReg( spi_PeriphConf[ periphId ].PeriphReg, CFG2 );
+
+        if( 0u != ( cfgValue & SPI_CFG2_MASTER ) )
+        {
+            mode = SPI_MODE_MASTER;
+        }
+        else
+        {
+            /* Slave */
+        }
+
+        retState = Spi_Set_SsLevelForMode( periphId, mode );
     }
     else
     {

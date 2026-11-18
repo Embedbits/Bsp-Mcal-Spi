@@ -14,22 +14,29 @@
  * Boards (named by the MCU as the detection of the connected boards does):
  * - STM32H723xG - NUCLEO-H723ZG (the detection names every board with ID 0x483
  *   and 1 MB flash STM32H723xG)
+ * - STM32H755xI - NUCLEO-H755ZI-Q (dual-core, the tests run on the Cortex-M7)
  * - STM32H7A3xI / STM32H7A3xIQ - NUCLEO-H7A3ZI-Q (the detection names every
  *   board with ID 0x480 and 2 MB flash STM32H7A3xI, STM32H7A3xIQ by a board file
  *   override)
- * Both are Nucleo-144 boards with the common Zio / morpho pinout.
+ * All are Nucleo-144 boards with the common Zio / morpho pinout.
  *
- * EXTERNAL WIRING (jumper wires between the Zio / morpho connectors):
- * SPI5 (master, APB2, DMA2 stream 4 / 3) and SPI2 (slave, APB1, DMA1 stream 4 / 3)
+ * EXTERNAL WIRING (jumper wires of the IT agent boards, wires of the board in the inventory):
+ * SPI1 (master, APB2, DMA2 stream 4 / 3) and SPI2 (slave, APB1, DMA1 stream 4 / 3)
  * are wired together, the DMA requests are routed to the streams by DMAMUX1. The
  * slave uses software NSS.
- * - SCK PF7 - PB10, MISO PF8 - PC2, MOSI PF9 - PC3. Master NSS PF6 (not wired).
+ * - NUCLEO-H7A3ZI-Q: SCK PA5 - PB13, MISO PA6 - PC2, MOSI PA7 - PC3.
+ * - NUCLEO-H723ZG: SCK PA5 - PB10, MISO PA6 - PC2, MOSI PB5 - PB15.
+ * - NUCLEO-H755ZI-Q: SCK PA5 - PB10, MISO PA6 - PC2, MOSI PB5 - PC3.
+ * Master NSS PA15 (not wired).
+ * Fixture of the board (EmBi_Platform IntegrationTesting, "Board fixtures"): the
+ * wiring is feature SPI1_SPI2_LOOP - the master + slave tests are ignored on a board
+ * with a fixture without it (a board without a fixture is expected to be wired).
  * The slave transfer is started before the master transfer. Master transfers
  * without gaps between frames (simplex / half-duplex) are received by the slave
  * by DMA - interrupts of both peripherals would share one CPU.
  *
- * Half-duplex: the bidirectional line of the master is MOSI (PF9), of the slave
- * MISO (wired to PF8) - master half-duplex transmission is received by slave
+ * Half-duplex: the bidirectional line of the master is MOSI, of the slave
+ * MISO (wired to the master MISO) - master half-duplex transmission is received by slave
  * simplex reception, slave half-duplex transmission by master full-duplex
  * reception. Data of master half-duplex reception are not driven by anyone - the
  * slave counts the frames clocked by the master.
@@ -58,26 +65,68 @@ typedef struct
 
 /* ======================= FORWARD DECLARATIONS ============================= */
 
-static spi_Config_t It_Spi_Get_Config       ( spi_PeriphId_t periphId );
-static void         It_Spi_Init             ( spi_Config_t * const config, spi_XferMode_t xferMode );
-static void         It_Spi_Start            ( spi_PeriphId_t periphId, const uint8_t * const txData, uint8_t * const rxData, uint16_t xferSize );
-static void         It_Spi_Wait             ( spi_PeriphId_t periphId );
-static void         It_Spi_ExpectComplete   ( spi_PeriphId_t periphId, uint32_t completeCnt );
-static void         It_Spi_Check_Frames     ( const uint8_t * const txData, const uint8_t * const rxData, uint32_t frameCnt, uint32_t frameBytes, uint32_t frameMask );
-static void         It_Spi_Delay            ( uint32_t loopCnt );
-static void         It_Spi_MasterComplete   ( void );
-static void         It_Spi_MasterError      ( spi_XferErrorId_t errorId );
-static void         It_Spi_SlaveComplete    ( void );
-static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
+static spi_Config_t ItSpi_Get_Config        ( spi_PeriphId_t periphId );
+static void         ItSpi_Init              ( spi_Config_t * const config, spi_XferMode_t xferMode );
+static void         ItSpi_Start             ( spi_PeriphId_t periphId,
+                                              const uint8_t * const txData,
+                                              uint8_t * const rxData,
+                                              uint16_t xferSize );
+static void         ItSpi_Wait              ( spi_PeriphId_t periphId );
+static void         ItSpi_ExpectComplete    ( spi_PeriphId_t periphId, uint32_t completeCnt );
+static void         ItSpi_Check_Frames      ( const uint8_t * const txData,
+                                              const uint8_t * const rxData,
+                                              uint32_t frameCnt,
+                                              uint32_t frameBytes,
+                                              uint32_t frameMask );
+static void         ItSpi_Delay             ( uint32_t loopCnt );
+static void         ItSpi_RequireLoop       ( void );
+static void         ItSpi_Start_KernelClock( void );
+static void         ItSpi_MasterComplete    ( void );
+static void         ItSpi_MasterError       ( spi_XferErrorId_t errorId );
+static void         ItSpi_SlaveComplete     ( void );
+static void         ItSpi_SlaveError        ( spi_XferErrorId_t errorId );
 
 /* ========================= SYMBOLIC CONSTANTS ============================= */
 
 /* Boards are named by their MCU (IT_BOARD_<MCU>, name of the board from the detection) */
-#if defined(IT_BOARD_STM32H723xG)  || \
-    defined(IT_BOARD_STM32H7A3xI)  || \
+#if defined(IT_BOARD_STM32H7A3xI)  || \
     defined(IT_BOARD_STM32H7A3xIQ)
 
-    /* NUCLEO-H723ZG / NUCLEO-H7A3ZI-Q (Nucleo-144) */
+    /* NUCLEO-H7A3ZI-Q: SCK PA5 - PB13, MISO PA6 - PC2, MOSI PA7 - PC3 */
+
+    /** SPI1 master (APB2): SCK PA5, MISO PA6, MOSI PA7 (AF5) */
+    #define IT_SPI_MASTER_SCK               ( SPI_SCK_PIN_SPI1_PA5 )
+    #define IT_SPI_MASTER_MISO              ( SPI_MISO_PIN_SPI1_PA6 )
+    #define IT_SPI_MASTER_MOSI              ( SPI_MOSI_PIN_SPI1_PA7 )
+
+    /** SPI2 slave (APB1): SCK PB13, MISO PC2, MOSI PC3 (AF5) */
+    #define IT_SPI_SLAVE_SCK                ( SPI_SCK_PIN_SPI2_PB13 )
+    #define IT_SPI_SLAVE_MISO               ( SPI_MISO_PIN_SPI2_PC2 )
+    #define IT_SPI_SLAVE_MOSI               ( SPI_MOSI_PIN_SPI2_PC3 )
+
+#elif defined(IT_BOARD_STM32H723xG)
+
+    /* NUCLEO-H723ZG: SCK PA5 - PB10, MISO PA6 - PC2, MOSI PB5 - PB15 (PC3 is the dual pad PC3_C on this
+       package and does not work as a digital input of the wire) */
+
+    /** SPI1 master (APB2): SCK PA5, MISO PA6, MOSI PB5 (AF5) */
+    #define IT_SPI_MASTER_SCK               ( SPI_SCK_PIN_SPI1_PA5 )
+    #define IT_SPI_MASTER_MISO              ( SPI_MISO_PIN_SPI1_PA6 )
+    #define IT_SPI_MASTER_MOSI              ( SPI_MOSI_PIN_SPI1_PB5 )
+
+    /** SPI2 slave (APB1): SCK PB10, MISO PC2, MOSI PB15 (AF5) */
+    #define IT_SPI_SLAVE_SCK                ( SPI_SCK_PIN_SPI2_PB10 )
+    #define IT_SPI_SLAVE_MISO               ( SPI_MISO_PIN_SPI2_PC2 )
+    #define IT_SPI_SLAVE_MOSI               ( SPI_MOSI_PIN_SPI2_PB15 )
+
+#elif defined(IT_BOARD_STM32H755xI)
+
+    /* NUCLEO-H755ZI-Q: SCK PA5 - PB10, MISO PA6 - PC2, MOSI PB5 - PC3 */
+
+    /** SPI1 master (APB2): SCK PA5, MISO PA6, MOSI PB5 (AF5) */
+    #define IT_SPI_MASTER_SCK               ( SPI_SCK_PIN_SPI1_PA5 )
+    #define IT_SPI_MASTER_MISO              ( SPI_MISO_PIN_SPI1_PA6 )
+    #define IT_SPI_MASTER_MOSI              ( SPI_MOSI_PIN_SPI1_PB5 )
 
     /** SPI2 slave (APB1): SCK PB10, MISO PC2, MOSI PC3 (AF5) */
     #define IT_SPI_SLAVE_SCK                ( SPI_SCK_PIN_SPI2_PB10 )
@@ -88,17 +137,21 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
     #error "Board of Spi integration tests is not defined (INTEGRATION_TEST_BOARD)."
 #endif
 
-/** SPI5 master (APB2): SCK PF7, MISO PF8, MOSI PF9, NSS PF6 (AF5) - Zio / morpho connectors of Nucleo-144 */
-#define IT_SPI_MASTER                       ( SPI_PERIPH_5 )
-#define IT_SPI_MASTER_RCC                   ( RCC_PERIPH_SPI5_PCLK2 )
-#define IT_SPI_MASTER_SCK                   ( SPI_SCK_PIN_SPI5_PF7 )
-#define IT_SPI_MASTER_MISO                  ( SPI_MISO_PIN_SPI5_PF8 )
-#define IT_SPI_MASTER_MOSI                  ( SPI_MOSI_PIN_SPI5_PF9 )
-#define IT_SPI_MASTER_NSS                   ( SPI_NSS_PIN_SPI5_PF6 )
-#define IT_SPI_MASTER_NSS_PORT              ( GPIOF )
-#define IT_SPI_MASTER_NSS_PIN               ( 6u )
+/** PLL1 for the kernel clock of SPI1 / SPI2 (the system clock stays HSI) - the default clock
+ *  configuration (StartUp) runs from HSI with all PLLs stopped: HSI 64 MHz / 4 * 24 = VCO 384 MHz,
+ *  Q / 4 = 96 MHz */
+#define IT_SPI_PLL_M                        ( 4u )
+#define IT_SPI_PLL_N                        ( 24u )
+#define IT_SPI_PLL_Q                        ( 4u )
 
-/** SPI5 DMA streams (DMA2 stream 4 TX / stream 3 RX) */
+/** SPI1 master (APB2): NSS PA15 (AF5) */
+#define IT_SPI_MASTER                       ( SPI_PERIPH_1 )
+#define IT_SPI_MASTER_RCC                   ( RCC_PERIPH_SPI1_PLL1Q )
+#define IT_SPI_MASTER_NSS                   ( SPI_NSS_PIN_SPI1_PA15 )
+#define IT_SPI_MASTER_NSS_PORT              ( GPIOA )
+#define IT_SPI_MASTER_NSS_PIN               ( 15u )
+
+/** SPI1 DMA streams (DMA2 stream 4 TX / stream 3 RX) */
 #define IT_SPI_MASTER_DMA                   ( SPI_DMA_PERIPH_2 )
 #define IT_SPI_MASTER_DMA_TX                ( SPI_DMA_CHANNEL_4 )
 #define IT_SPI_MASTER_DMA_RX                ( SPI_DMA_CHANNEL_3 )
@@ -117,8 +170,14 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
 /** Bus frequency of DMA transfers [Hz] */
 #define IT_SPI_FAST_FREQ_HZ                 ( 6000000u )
 
-/** Bus frequency of polled master half-duplex reception [Hz] (frame longer than Spi_Task()) */
-#define IT_SPI_SLOW_FREQ_HZ                 ( 400000u )
+/** Bus frequency of polled master half-duplex reception [Hz] (frame longer than Spi_Task()) -
+ *  slowest SCK of SPI1: PLL1Q 96 MHz / 256 = 375 kHz */
+#define IT_SPI_SLOW_FREQ_HZ                 ( 375000u )
+
+/** Output speed of the SPI pins - the pins are connected by jumper wires: high / very high speed
+ *  edges cause crosstalk / ringing, the slave sees an extra SCK edge with CPHA = 1 when both data
+ *  lines switch (observed on STM32H5 boards). Medium speed is sufficient for 6 MHz. */
+#define IT_SPI_PIN_SPEED                    ( SPI_PIN_SPEED_MEDIUM )
 
 /** Size of transfer buffers (bytes) */
 #define IT_SPI_BUFFER_SIZE                  ( 32u )
@@ -139,6 +198,9 @@ static void         It_Spi_SlaveError       ( spi_XferErrorId_t errorId );
 
 /** Maximal count of polling loops until the event occurs (> 100 ms) */
 #define IT_SPI_WAIT_LOOPS                   ( 2000000u )
+
+/** Master inter-data idleness of the NSS pulse test [SCK periods] (pulse of MIDI - 1 periods) */
+#define IT_SPI_NSS_PULSE_MIDI               ( 4u )
 
 /** Busy loops longer than the transfer of several frames */
 #define IT_SPI_IDLE_LOOPS                   ( 50000u )
@@ -168,6 +230,8 @@ static uint8_t              itSpi_SlaveRx[ IT_SPI_BUFFER_SIZE ]  __attribute__((
 
 void setUp( void )
 {
+    ItSpi_Start_KernelClock();
+
     for( uint32_t idx = 0u; IT_SPI_BUFFER_SIZE > idx; idx++ )
     {
         itSpi_MasterTx[ idx ] = (uint8_t)( 0x5Au + ( idx * 7u ) );
@@ -194,7 +258,7 @@ void tearDown( void )
 /**
  * \brief   Spi_Init() activates clock and configures the bus frequency.
  *
- * \details SPI5 clock is inactive after reset. 1 MHz required.
+ * \details SPI1 clock is inactive after reset. 1 MHz required.
  *
  * \par Expected results
  * - SPI_REQUEST_OK, clock active, peripheral disabled until a transfer starts.
@@ -202,7 +266,7 @@ void tearDown( void )
  */
 void It_Spi_Init_ClockActivatedAndBusFreqSet( void )
 {
-    spi_Config_t        config      = It_Spi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        config      = ItSpi_Get_Config( IT_SPI_MASTER );
     rcc_FunctionState_t clockState  = RCC_FUNCTION_ACTIVE;
     spi_FlagState_t     periphState = SPI_FLAG_ACTIVE;
     spi_FreqHz_t        busFreq     = 0u;
@@ -210,7 +274,7 @@ void It_Spi_Init_ClockActivatedAndBusFreqSet( void )
     TEST_ASSERT_EQUAL( RCC_REQUEST_OK, Rcc_Get_PeriphState( IT_SPI_MASTER_RCC, &clockState ) );
     TEST_ASSERT_EQUAL( RCC_FUNCTION_INACTIVE, clockState );
 
-    It_Spi_Init( &config, SPI_XFER_MODE_POLL );
+    ItSpi_Init( &config, SPI_XFER_MODE_POLL );
 
     TEST_ASSERT_EQUAL( RCC_REQUEST_OK, Rcc_Get_PeriphState( IT_SPI_MASTER_RCC, &clockState ) );
     TEST_ASSERT_EQUAL( RCC_FUNCTION_ACTIVE, clockState );
@@ -231,10 +295,10 @@ void It_Spi_Init_ClockActivatedAndBusFreqSet( void )
  */
 void It_Spi_Deinit_ClockDeactivated( void )
 {
-    spi_Config_t        config     = It_Spi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        config     = ItSpi_Get_Config( IT_SPI_MASTER );
     rcc_FunctionState_t clockState = RCC_FUNCTION_ACTIVE;
 
-    It_Spi_Init( &config, SPI_XFER_MODE_POLL );
+    ItSpi_Init( &config, SPI_XFER_MODE_POLL );
 
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Deinit( IT_SPI_MASTER ) );
     TEST_ASSERT_EQUAL( RCC_REQUEST_OK, Rcc_Get_PeriphState( IT_SPI_MASTER_RCC, &clockState ) );
@@ -254,21 +318,23 @@ void It_Spi_Deinit_ClockDeactivated( void )
  */
 void It_Spi_Poll_FullDuplex_DataExchanged( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
 
-    It_Spi_Init( &master, SPI_XFER_MODE_POLL );
-    It_Spi_Init( &slave, SPI_XFER_MODE_POLL );
+    ItSpi_RequireLoop();
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 16u );
+    ItSpi_Init( &master, SPI_XFER_MODE_POLL );
+    ItSpi_Init( &slave, SPI_XFER_MODE_POLL );
+
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 16u );
     Spi_Task();
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 16u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 16u );
 
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, 16u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, 16u );
 }
@@ -277,23 +343,28 @@ void It_Spi_Poll_FullDuplex_DataExchanged( void )
 /**
  * \brief   Slave which does not read received frames reports overrun.
  *
- * \details Master transfers 4 frames by interrupts, polled slave transfer is not serviced
- *          (Spi_Task() is not called) until the master finished.
+ * \details Master transfers 32 frames (more than the 16 byte receive FIFO of the slave) by interrupts, the
+ *          polled slave transfer is not serviced (Spi_Task() is not called) until the master finished.
  *
  * \par Expected results
  * - Master completes, slave reports SPI_XFER_ERROR_OVERRUN with the next Spi_Task() call.
  */
 void It_Spi_Poll_SlaveNotServiced_OverrunReported( void )
 {
-    spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t        master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_ISR );
-    It_Spi_Init( &slave, SPI_XFER_MODE_POLL );
+    ItSpi_RequireLoop();
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, 4u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, 4u );
+    /* Reception only - a full-duplex slave without transmit data would report an underrun as well */
+    slave.Direction = SPI_DIRECTION_SIMPLEX_RX;
+
+    ItSpi_Init( &master, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_POLL );
+
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
 
     for( uint32_t loopCnt = 0u;
          ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
@@ -303,7 +374,7 @@ void It_Spi_Poll_SlaveNotServiced_OverrunReported( void )
         (void)Spi_Get_XferState( IT_SPI_MASTER, &xferState );
     }
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
 
     Spi_Task();
 
@@ -325,31 +396,33 @@ void It_Spi_Poll_SlaveNotServiced_OverrunReported( void )
  */
 void It_Spi_Poll_MasterHalfDuplexRx_ExactFrameCount( void )
 {
-    spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t        master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_INACTIVE;
+
+    ItSpi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     master.BusFreq   = IT_SPI_SLOW_FREQ_HZ;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_POLL );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_POLL );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_HALF_RX_FRAMES );
-    It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, IT_SPI_HALF_RX_FRAMES );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_HALF_RX_FRAMES );
+    ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, IT_SPI_HALF_RX_FRAMES );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_HALF_RX_FRAMES + 1u );
-    It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, IT_SPI_HALF_RX_FRAMES );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_HALF_RX_FRAMES + 1u );
+    ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, IT_SPI_HALF_RX_FRAMES );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 2u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 2u );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Get_XferState( IT_SPI_SLAVE, &xferState ) );
     TEST_ASSERT_EQUAL_MESSAGE( SPI_FUNCTION_ACTIVE, xferState, "Master clocked more frames" );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_XferStop( IT_SPI_SLAVE ) );
@@ -365,8 +438,10 @@ void It_Spi_Poll_MasterHalfDuplexRx_ExactFrameCount( void )
  */
 void It_Spi_Isr_FullDuplex16BitLsbFirst_DataExchanged( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.DataSize  = SPI_DATA_SIZE_16BIT;
     master.BitOrder  = SPI_BIT_ORDER_LSB_FIRST;
@@ -375,16 +450,16 @@ void It_Spi_Isr_FullDuplex16BitLsbFirst_DataExchanged( void )
     slave.BitOrder   = SPI_BIT_ORDER_LSB_FIRST;
     slave.ClockMode  = SPI_CLOCK_MODE_1;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_ISR );
-    It_Spi_Init( &slave, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &master, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_ISR );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, 16u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, 16u );
 }
@@ -399,33 +474,35 @@ void It_Spi_Isr_FullDuplex16BitLsbFirst_DataExchanged( void )
  */
 void It_Spi_Isr_Simplex_DataTransferred( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_SIMPLEX_TX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_ISR );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, 12u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, 12u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, 12u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, 12u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, 12u );
 
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_Direction( IT_SPI_MASTER, SPI_DIRECTION_SIMPLEX_RX ) );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_Direction( IT_SPI_SLAVE, SPI_DIRECTION_SIMPLEX_TX ) );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, NULL, 12u );
-    It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, 12u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, NULL, 12u );
+    ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, 12u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, 12u );
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 2u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 2u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 2u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 2u );
 }
 
 
@@ -437,22 +514,24 @@ void It_Spi_Isr_Simplex_DataTransferred( void )
  */
 void It_Spi_Isr_MasterHalfDuplexTx_SlaveReceives( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_ISR );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, 10u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, 10u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, 10u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, 10u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, 10u );
 }
 
@@ -469,35 +548,37 @@ void It_Spi_Isr_MasterHalfDuplexTx_SlaveReceives( void )
  */
 void It_Spi_Isr_MasterHalfDuplexRx_ExactFrameCount( void )
 {
-    spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t        master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_INACTIVE;
+
+    ItSpi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_ISR );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
     for( uint16_t frameCnt = 1u; IT_SPI_HALF_RX_FRAMES >= frameCnt; frameCnt += 2u )
     {
-        It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, frameCnt );
-        It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
-        It_Spi_Wait( IT_SPI_MASTER );
-        It_Spi_Wait( IT_SPI_SLAVE );
+        ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, frameCnt );
+        ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
+        ItSpi_Wait( IT_SPI_MASTER );
+        ItSpi_Wait( IT_SPI_SLAVE );
 
-        It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, (uint16_t)( frameCnt + 1u ) );
-        It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
-        It_Spi_Wait( IT_SPI_MASTER );
-        It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+        ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, (uint16_t)( frameCnt + 1u ) );
+        ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
+        ItSpi_Wait( IT_SPI_MASTER );
+        ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
         TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Get_XferState( IT_SPI_SLAVE, &xferState ) );
         TEST_ASSERT_EQUAL_MESSAGE( SPI_FUNCTION_ACTIVE, xferState, "Master clocked more frames" );
         TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_XferStop( IT_SPI_SLAVE ) );
     }
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 4u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 2u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 4u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 2u );
 }
 
 
@@ -512,14 +593,14 @@ void It_Spi_Isr_MasterHalfDuplexRx_ExactFrameCount( void )
  */
 void It_Spi_Isr_SlaveWithoutMaster_StoppedByApplication( void )
 {
-    spi_Config_t        slave       = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t        slave       = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState   = SPI_FUNCTION_INACTIVE;
     spi_FlagState_t     periphState = SPI_FLAG_ACTIVE;
 
-    It_Spi_Init( &slave, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_ISR );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 4u );
-    It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 4u );
+    ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Get_XferState( IT_SPI_SLAVE, &xferState ) );
     TEST_ASSERT_EQUAL( SPI_FUNCTION_ACTIVE, xferState );
@@ -545,20 +626,22 @@ void It_Spi_Isr_SlaveWithoutMaster_StoppedByApplication( void )
  */
 void It_Spi_Dma_FullDuplex_DataExchanged( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.BusFreq = IT_SPI_FAST_FREQ_HZ;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
     for( uint32_t xferIdx = 0u; 2u > xferIdx; xferIdx++ )
     {
-        It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
-        It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE );
-        It_Spi_Wait( IT_SPI_MASTER );
-        It_Spi_Wait( IT_SPI_SLAVE );
+        ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
+        ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE );
+        ItSpi_Wait( IT_SPI_MASTER );
+        ItSpi_Wait( IT_SPI_SLAVE );
 
         TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE );
         TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
@@ -572,8 +655,8 @@ void It_Spi_Dma_FullDuplex_DataExchanged( void )
         }
     }
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 2u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 2u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 2u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 2u );
 }
 
 
@@ -593,26 +676,28 @@ void It_Spi_Dma_FullDuplex_DataExchanged( void )
  */
 void It_Spi_Dma_Crc_CheckedByReceiver( void )
 {
-    spi_Config_t    master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t    slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t    master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t    slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_CrcConfig_t crcConfig = { .State = SPI_FUNCTION_ACTIVE, .Size = SPI_DATA_SIZE_8BIT, .Polynomial = IT_SPI_CRC8_POLY, .InitValue = SPI_CRC_INIT_ALL_ZERO };
     spi_CrcValue_t  masterTx  = 0u;
     spi_CrcValue_t  masterRx  = 0u;
     spi_CrcValue_t  slaveTx   = 0u;
     spi_CrcValue_t  slaveRx   = 0u;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_RequireLoop();
+
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_CrcConfig( IT_SPI_MASTER, &crcConfig ) );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_CrcConfig( IT_SPI_SLAVE, &crcConfig ) );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, 8u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, 8u );
 
@@ -624,10 +709,10 @@ void It_Spi_Dma_Crc_CheckedByReceiver( void )
     crcConfig.Polynomial = IT_SPI_CRC8_POLY_OTHER;
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_CrcConfig( IT_SPI_SLAVE, &crcConfig ) );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
     TEST_ASSERT_EQUAL_UINT32( 1u, itSpi_Master.ErrorCnt );
     TEST_ASSERT_EQUAL( SPI_XFER_ERROR_CRC, itSpi_Master.LastError );
@@ -646,23 +731,25 @@ void It_Spi_Dma_Crc_CheckedByReceiver( void )
  */
 void It_Spi_Dma_SlaveHalfDuplexTx16Bit_MasterReceives( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.DataSize = SPI_DATA_SIZE_16BIT;
     slave.DataSize  = SPI_DATA_SIZE_16BIT;
     slave.Direction = SPI_DIRECTION_HALF_DUPLEX;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, NULL, 8u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, NULL, 8u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, 16u );
 }
 
@@ -679,42 +766,44 @@ void It_Spi_Dma_SlaveHalfDuplexTx16Bit_MasterReceives( void )
  */
 void It_Spi_Dma_MasterHalfDuplexRx_ExactFrameCount( void )
 {
-    spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t        master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_INACTIVE;
+
+    ItSpi_RequireLoop();
 
     master.Direction = SPI_DIRECTION_HALF_DUPLEX;
     slave.Direction  = SPI_DIRECTION_SIMPLEX_RX;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
     for( uint16_t frameCnt = 1u; IT_SPI_HALF_RX_FRAMES >= frameCnt; frameCnt += 2u )
     {
-        It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, frameCnt );
-        It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
-        It_Spi_Wait( IT_SPI_MASTER );
-        It_Spi_Wait( IT_SPI_SLAVE );
+        ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, frameCnt );
+        ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
+        ItSpi_Wait( IT_SPI_MASTER );
+        ItSpi_Wait( IT_SPI_SLAVE );
 
-        It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, (uint16_t)( frameCnt + 1u ) );
-        It_Spi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
-        It_Spi_Wait( IT_SPI_MASTER );
-        It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+        ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, (uint16_t)( frameCnt + 1u ) );
+        ItSpi_Start( IT_SPI_MASTER, NULL, itSpi_MasterRx, frameCnt );
+        ItSpi_Wait( IT_SPI_MASTER );
+        ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
         TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Get_XferState( IT_SPI_SLAVE, &xferState ) );
         TEST_ASSERT_EQUAL_MESSAGE( SPI_FUNCTION_ACTIVE, xferState, "Master clocked more frames" );
         TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_XferStop( IT_SPI_SLAVE ) );
     }
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 4u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 2u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 4u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 2u );
 }
 
 
 /**
  * \brief   Hardware NSS of the master is active (low) during the transfer only.
  *
- * \details Master with hardware NSS output (PF6, pull-up), 32 frames by DMA.
+ * \details Master with hardware NSS output (PA15, pull-up), 32 frames by DMA.
  *
  * \par Expected results
  * - NSS high before the transfer, low while the transfer is running, high afterwards.
@@ -722,22 +811,24 @@ void It_Spi_Dma_MasterHalfDuplexRx_ExactFrameCount( void )
  */
 void It_Spi_Dma_HardNss_ActiveDuringTransfer( void )
 {
-    spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t        master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
     uint32_t            nssLow    = 0u;
+
+    ItSpi_RequireLoop();
 
     master.NssConfig.Mode = SPI_NSS_MODE_HARD;
     master.NssPin         = IT_SPI_MASTER_NSS;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
-    It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
     TEST_ASSERT_BIT_HIGH_MESSAGE( IT_SPI_MASTER_NSS_PIN, IT_SPI_MASTER_NSS_PORT->IDR, "NSS active before transfer" );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
 
     for( uint32_t loopCnt = 0u;
          ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
@@ -756,13 +847,13 @@ void It_Spi_Dma_HardNss_ActiveDuringTransfer( void )
         (void)Spi_Get_XferState( IT_SPI_MASTER, &xferState );
     }
 
-    It_Spi_Wait( IT_SPI_SLAVE );
-    It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+    ItSpi_Wait( IT_SPI_SLAVE );
+    ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
     TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE( 0u, nssLow, "NSS not active during transfer" );
     TEST_ASSERT_BIT_HIGH_MESSAGE( IT_SPI_MASTER_NSS_PIN, IT_SPI_MASTER_NSS_PORT->IDR, "NSS active after transfer" );
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
 }
 
@@ -778,25 +869,27 @@ void It_Spi_Dma_HardNss_ActiveDuringTransfer( void )
  */
 void It_Spi_Dma_FullDuplex12Bit_DataExchanged( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.BusFreq  = IT_SPI_FAST_FREQ_HZ;
     master.DataSize = SPI_DATA_SIZE_12BIT;
     slave.DataSize  = SPI_DATA_SIZE_12BIT;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE / 2u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE / 2u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE / 2u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE / 2u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
-    It_Spi_Check_Frames( itSpi_SlaveTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE / 2u, 2u, IT_SPI_MASK_12BIT );
-    It_Spi_Check_Frames( itSpi_MasterTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE / 2u, 2u, IT_SPI_MASK_12BIT );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_Check_Frames( itSpi_SlaveTx, itSpi_MasterRx, IT_SPI_BUFFER_SIZE / 2u, 2u, IT_SPI_MASK_12BIT );
+    ItSpi_Check_Frames( itSpi_MasterTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE / 2u, 2u, IT_SPI_MASK_12BIT );
 }
 
 
@@ -808,24 +901,26 @@ void It_Spi_Dma_FullDuplex12Bit_DataExchanged( void )
  */
 void It_Spi_Isr_FullDuplex5Bit_DataExchanged( void )
 {
-    spi_Config_t master = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t slave  = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t master = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t slave  = ItSpi_Get_Config( IT_SPI_SLAVE );
+
+    ItSpi_RequireLoop();
 
     master.DataSize = SPI_DATA_SIZE_5BIT;
     slave.DataSize  = SPI_DATA_SIZE_5BIT;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_ISR );
-    It_Spi_Init( &slave, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &master, SPI_XFER_MODE_ISR );
+    ItSpi_Init( &slave, SPI_XFER_MODE_ISR );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
-    It_Spi_Check_Frames( itSpi_SlaveTx, itSpi_MasterRx, 8u, 1u, IT_SPI_MASK_5BIT );
-    It_Spi_Check_Frames( itSpi_MasterTx, itSpi_SlaveRx, 8u, 1u, IT_SPI_MASK_5BIT );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_Check_Frames( itSpi_SlaveTx, itSpi_MasterRx, 8u, 1u, IT_SPI_MASK_5BIT );
+    ItSpi_Check_Frames( itSpi_MasterTx, itSpi_SlaveRx, 8u, 1u, IT_SPI_MASK_5BIT );
 }
 
 
@@ -841,8 +936,8 @@ void It_Spi_Isr_FullDuplex5Bit_DataExchanged( void )
  */
 void It_Spi_Dma_Crc16EightBitFrames_CheckedByReceiver( void )
 {
-    spi_Config_t    master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t    slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
+    spi_Config_t    master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t    slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     spi_CrcConfig_t crcConfig = { .State = SPI_FUNCTION_ACTIVE, .Size = SPI_DATA_SIZE_16BIT, .Polynomial = IT_SPI_CRC16_POLY, .InitValue = SPI_CRC_INIT_ALL_ZERO };
     spi_CrcConfig_t readBack;
     spi_CrcValue_t  masterTx  = 0u;
@@ -850,20 +945,22 @@ void It_Spi_Dma_Crc16EightBitFrames_CheckedByReceiver( void )
     spi_CrcValue_t  slaveTx   = 0u;
     spi_CrcValue_t  slaveRx   = 0u;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
+    ItSpi_RequireLoop();
+
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_CrcConfig( IT_SPI_MASTER, &crcConfig ) );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_CrcConfig( IT_SPI_SLAVE, &crcConfig ) );
     TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Get_CrcConfig( IT_SPI_MASTER, &readBack ) );
     TEST_ASSERT_EQUAL( SPI_DATA_SIZE_16BIT, readBack.Size );
 
-    It_Spi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
-    It_Spi_Wait( IT_SPI_MASTER );
-    It_Spi_Wait( IT_SPI_SLAVE );
+    ItSpi_Start( IT_SPI_SLAVE, itSpi_SlaveTx, itSpi_SlaveRx, 8u );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, itSpi_MasterRx, 8u );
+    ItSpi_Wait( IT_SPI_MASTER );
+    ItSpi_Wait( IT_SPI_SLAVE );
 
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_SlaveTx, itSpi_MasterRx, 8u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, 8u );
 
@@ -877,8 +974,8 @@ void It_Spi_Dma_Crc16EightBitFrames_CheckedByReceiver( void )
 /**
  * \brief   NSS pulse of the master releases NSS between the frames.
  *
- * \details Master with hardware NSS output and NSS pulse (PF6, mode 0), 32 frames by DMA at the
- *          slow bus frequency, NSS level sampled while the transfer is running.
+ * \details Master with hardware NSS output and NSS pulse (PA15, mode 0, inter-data idleness 4 SCK periods),
+ *          32 frames by DMA at the slow bus frequency, NSS level sampled while the transfer is running.
  *
  * \par Expected results
  * - NSS sampled low (frames) and high (pulses between the frames) during the transfer, high
@@ -887,27 +984,33 @@ void It_Spi_Dma_Crc16EightBitFrames_CheckedByReceiver( void )
  */
 void It_Spi_Dma_HardNssPulse_ReleasedBetweenFrames( void )
 {
-    spi_Config_t        master    = It_Spi_Get_Config( IT_SPI_MASTER );
-    spi_Config_t        slave     = It_Spi_Get_Config( IT_SPI_SLAVE );
-    spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
+    spi_Config_t        master    = ItSpi_Get_Config( IT_SPI_MASTER );
+    spi_Config_t        slave     = ItSpi_Get_Config( IT_SPI_SLAVE );
     uint32_t            nssLow    = 0u;
     uint32_t            nssPulse  = 0u;
+
+    ItSpi_RequireLoop();
 
     master.BusFreq         = IT_SPI_SLOW_FREQ_HZ;
     master.NssConfig.Mode  = SPI_NSS_MODE_HARD;
     master.NssConfig.Pulse = SPI_FUNCTION_ACTIVE;
     master.NssPin          = IT_SPI_MASTER_NSS;
 
-    It_Spi_Init( &master, SPI_XFER_MODE_DMA );
-    It_Spi_Init( &slave, SPI_XFER_MODE_DMA );
-    It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+    ItSpi_Init( &master, SPI_XFER_MODE_DMA );
+    ItSpi_Init( &slave, SPI_XFER_MODE_DMA );
+    /* RM0455 / RM0468: the NSS is pulsed inactive between the frames only with the master inter-data idleness MIDI > 1,
+     * for MIDI - 1 SCK periods (without it only the gaps of the data supply release the NSS) */
+    TEST_ASSERT_EQUAL( SPI_REQUEST_OK, Spi_Set_MasterTiming( IT_SPI_MASTER, IT_SPI_NSS_PULSE_MIDI, 0u ) );
+    ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
-    It_Spi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
-    It_Spi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
+    ItSpi_Start( IT_SPI_SLAVE, NULL, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
+    ItSpi_Start( IT_SPI_MASTER, itSpi_MasterTx, NULL, IT_SPI_BUFFER_SIZE );
 
+    /* The pulse between two frames is as short as one SCK period: the pin is sampled in a loop without any call and
+     * the end of the transfer is the complete callback of the master (volatile counter) */
     for( uint32_t loopCnt = 0u;
          ( IT_SPI_WAIT_LOOPS > loopCnt ) &&
-         ( SPI_FUNCTION_INACTIVE != xferState );
+         ( 0u == itSpi_Master.CompleteCnt );
          loopCnt++ )
     {
         const uint32_t nssHigh = IT_SPI_MASTER_NSS_PORT->IDR & ( 1u << IT_SPI_MASTER_NSS_PIN );
@@ -925,38 +1028,58 @@ void It_Spi_Dma_HardNssPulse_ReleasedBetweenFrames( void )
         {
             /* First frame has not started */
         }
-
-        (void)Spi_Get_XferState( IT_SPI_MASTER, &xferState );
     }
 
-    It_Spi_Wait( IT_SPI_SLAVE );
-    It_Spi_Delay( IT_SPI_IDLE_LOOPS );
+    ItSpi_Wait( IT_SPI_SLAVE );
+    ItSpi_Delay( IT_SPI_IDLE_LOOPS );
 
     TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE( 0u, nssLow, "NSS not active during transfer" );
     TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE( 0u, nssPulse, "NSS not released between frames" );
     TEST_ASSERT_BIT_HIGH_MESSAGE( IT_SPI_MASTER_NSS_PIN, IT_SPI_MASTER_NSS_PORT->IDR, "NSS active after transfer" );
-    It_Spi_ExpectComplete( IT_SPI_MASTER, 1u );
-    It_Spi_ExpectComplete( IT_SPI_SLAVE, 1u );
+    ItSpi_ExpectComplete( IT_SPI_MASTER, 1u );
+    ItSpi_ExpectComplete( IT_SPI_SLAVE, 1u );
     TEST_ASSERT_EQUAL_HEX8_ARRAY( itSpi_MasterTx, itSpi_SlaveRx, IT_SPI_BUFFER_SIZE );
 }
 
 /* ========================== LOCAL FUNCTIONS =============================== */
 
 /**
- * \brief Returns configuration of the master (SPI5) or the slave (SPI2) with pins of the board
+ * \brief Starts PLL1 which is the kernel clock source of SPI1 / SPI2 (default clock
+ *        configuration runs from HSI with all PLLs stopped).
+ */
+static void ItSpi_Start_KernelClock( void )
+{
+    rcc_PllConfigStruct_t pllConfig;
+
+    pllConfig.Pll_Source   = RCC_PLL_SRC_HSI;
+    pllConfig.M_Divider    = IT_SPI_PLL_M;
+    pllConfig.N_Multiplier = IT_SPI_PLL_N;
+    pllConfig.P_Divider    = 0u;
+    pllConfig.Q_Divider    = IT_SPI_PLL_Q;
+    pllConfig.R_Divider    = 0u;
+
+    TEST_ASSERT_EQUAL( RCC_REQUEST_OK, Rcc_Set_PllConfig( RCC_PLL_1, &pllConfig ) );
+}
+
+
+/**
+ * \brief Returns configuration of the master (SPI1) or the slave (SPI2) with pins of the board
  *        (default configuration: 1 MHz, mode 0, 8-bit, MSB first, full-duplex, software NSS).
  *
  * \param periphId [in]: IT_SPI_MASTER or IT_SPI_SLAVE
  * \return Peripheral configuration
  */
-static spi_Config_t It_Spi_Get_Config( spi_PeriphId_t periphId )
+static spi_Config_t ItSpi_Get_Config( spi_PeriphId_t periphId )
 {
     spi_Config_t config;
 
     (void)Spi_Get_DefaultConfig( &config );
 
     config.PeriphId = periphId;
+    /* Kernel clock of the peripheral itself */
+    config.ClkSrc   = (spi_ClkSrc_t)SPI_CLK_SRC_ENCODE( periphId, SPI_CLK_SRC_ID_PLL1Q );
     config.BusFreq  = IT_SPI_BUS_FREQ_HZ;
+    config.PinSpeed = IT_SPI_PIN_SPEED;
 
     if( IT_SPI_MASTER == periphId )
     {
@@ -981,10 +1104,10 @@ static spi_Config_t It_Spi_Get_Config( spi_PeriphId_t periphId )
  * \brief Initializes the peripheral of the configuration with data handling of the transfer
  *        mode (DMA channels of the board, callbacks of the master / slave).
  *
- * \param config   [in]: Configuration prepared by \ref It_Spi_Get_Config
+ * \param config   [in]: Configuration prepared by \ref ItSpi_Get_Config
  * \param xferMode [in]: Data transfer mode
  */
-static void It_Spi_Init( spi_Config_t * const config, spi_XferMode_t xferMode )
+static void ItSpi_Init( spi_Config_t * const config, spi_XferMode_t xferMode )
 {
     spi_DataConfig_t * dataConfig = &itSpi_SlaveData;
 
@@ -1008,8 +1131,8 @@ static void It_Spi_Init( spi_Config_t * const config, spi_XferMode_t xferMode )
         dataConfig->TxDmaChannelId       = IT_SPI_MASTER_DMA_TX;
         dataConfig->RxDmaPeriphId        = IT_SPI_MASTER_DMA;
         dataConfig->RxDmaChannelId       = IT_SPI_MASTER_DMA_RX;
-        dataConfig->XferCompleteCallback = It_Spi_MasterComplete;
-        dataConfig->ErrorCallback        = It_Spi_MasterError;
+        dataConfig->XferCompleteCallback = ItSpi_MasterComplete;
+        dataConfig->ErrorCallback        = ItSpi_MasterError;
     }
     else
     {
@@ -1017,8 +1140,8 @@ static void It_Spi_Init( spi_Config_t * const config, spi_XferMode_t xferMode )
         dataConfig->TxDmaChannelId       = IT_SPI_SLAVE_DMA_TX;
         dataConfig->RxDmaPeriphId        = IT_SPI_SLAVE_DMA;
         dataConfig->RxDmaChannelId       = IT_SPI_SLAVE_DMA_RX;
-        dataConfig->XferCompleteCallback = It_Spi_SlaveComplete;
-        dataConfig->ErrorCallback        = It_Spi_SlaveError;
+        dataConfig->XferCompleteCallback = ItSpi_SlaveComplete;
+        dataConfig->ErrorCallback        = ItSpi_SlaveError;
     }
 
     config->DataConfig = dataConfig;
@@ -1035,7 +1158,10 @@ static void It_Spi_Init( spi_Config_t * const config, spi_XferMode_t xferMode )
  * \param rxData  [out]: Received data or NULL
  * \param xferSize [in]: Count of frames
  */
-static void It_Spi_Start( spi_PeriphId_t periphId, const uint8_t * const txData, uint8_t * const rxData, uint16_t xferSize )
+static void ItSpi_Start( spi_PeriphId_t periphId,
+                         const uint8_t * const txData,
+                         uint8_t * const rxData,
+                         uint16_t xferSize )
 {
     const spi_XferRequest_t request = { .TxData = txData, .RxData = rxData, .XferSize = xferSize };
 
@@ -1049,7 +1175,7 @@ static void It_Spi_Start( spi_PeriphId_t periphId, const uint8_t * const txData,
  *
  * \param periphId [in]: Peripheral
  */
-static void It_Spi_Wait( spi_PeriphId_t periphId )
+static void ItSpi_Wait( spi_PeriphId_t periphId )
 {
     spi_FunctionState_t xferState = SPI_FUNCTION_ACTIVE;
 
@@ -1063,7 +1189,18 @@ static void It_Spi_Wait( spi_PeriphId_t periphId )
         (void)Spi_Get_XferState( periphId, &xferState );
     }
 
-    UNITY_TEST_ASSERT_EQUAL_INT( SPI_FUNCTION_INACTIVE, xferState, __LINE__, ( IT_SPI_MASTER == periphId ) ? "Master transfer not finished" : "Slave transfer not finished" );
+    const char * message = "Slave transfer not finished";
+
+    if( IT_SPI_MASTER == periphId )
+    {
+        message = "Master transfer not finished";
+    }
+    else
+    {
+        /* Slave */
+    }
+
+    UNITY_TEST_ASSERT_EQUAL_INT( SPI_FUNCTION_INACTIVE, xferState, __LINE__, message );
 }
 
 
@@ -1073,7 +1210,7 @@ static void It_Spi_Wait( spi_PeriphId_t periphId )
  * \param periphId    [in]: Peripheral
  * \param completeCnt [in]: Expected count of complete callbacks
  */
-static void It_Spi_ExpectComplete( spi_PeriphId_t periphId, uint32_t completeCnt )
+static void ItSpi_ExpectComplete( spi_PeriphId_t periphId, uint32_t completeCnt )
 {
     const itSpi_Events_t * events = &itSpi_Slave;
 
@@ -1113,7 +1250,11 @@ static void It_Spi_ExpectComplete( spi_PeriphId_t periphId, uint32_t completeCnt
  * \param frameBytes [in]: Bytes per frame (1 or 2)
  * \param frameMask  [in]: Significant bits of the frame
  */
-static void It_Spi_Check_Frames( const uint8_t * const txData, const uint8_t * const rxData, uint32_t frameCnt, uint32_t frameBytes, uint32_t frameMask )
+static void ItSpi_Check_Frames( const uint8_t * const txData,
+                                const uint8_t * const rxData,
+                                uint32_t frameCnt,
+                                uint32_t frameBytes,
+                                uint32_t frameMask )
 {
     for( uint32_t frameIdx = 0u; frameCnt > frameIdx; frameIdx++ )
     {
@@ -1140,7 +1281,7 @@ static void It_Spi_Check_Frames( const uint8_t * const txData, const uint8_t * c
  *
  * \param loopCnt [in]: Count of loops
  */
-static void It_Spi_Delay( uint32_t loopCnt )
+static void ItSpi_Delay( uint32_t loopCnt )
 {
     for( volatile uint32_t loopIdx = 0u; loopCnt > loopIdx; loopIdx++ )
     {
@@ -1149,15 +1290,33 @@ static void It_Spi_Delay( uint32_t loopCnt )
 }
 
 
+/**
+ * \brief   Ignores the test on a board whose SPI1 is not wired to SPI2.
+ *
+ * \details Fixture of the board (EmBi_Platform, IntegrationTesting README "Board fixtures"):
+ *          feature SPI1_SPI2_LOOP. A board without a fixture (IT_FIXTURE not defined) is
+ *          expected to have the wiring.
+ */
+static void ItSpi_RequireLoop( void )
+{
+#if defined(IT_FEATURE_SPI1_SPI2_LOOP) || \
+    !defined(IT_FIXTURE)
+    /* SPI1 and SPI2 are wired together */
+#else
+    TEST_IGNORE_MESSAGE( "Board without the fixture SPI1_SPI2_LOOP (SPI1 wired to SPI2)" );
+#endif
+}
+
+
 /** Master transfer complete callback */
-static void It_Spi_MasterComplete( void )
+static void ItSpi_MasterComplete( void )
 {
     itSpi_Master.CompleteCnt++;
 }
 
 
 /** Master error callback */
-static void It_Spi_MasterError( spi_XferErrorId_t errorId )
+static void ItSpi_MasterError( spi_XferErrorId_t errorId )
 {
     itSpi_Master.ErrorCnt++;
     itSpi_Master.LastError = errorId;
@@ -1165,14 +1324,14 @@ static void It_Spi_MasterError( spi_XferErrorId_t errorId )
 
 
 /** Slave transfer complete callback */
-static void It_Spi_SlaveComplete( void )
+static void ItSpi_SlaveComplete( void )
 {
     itSpi_Slave.CompleteCnt++;
 }
 
 
 /** Slave error callback */
-static void It_Spi_SlaveError( spi_XferErrorId_t errorId )
+static void ItSpi_SlaveError( spi_XferErrorId_t errorId )
 {
     itSpi_Slave.ErrorCnt++;
     itSpi_Slave.LastError = errorId;
