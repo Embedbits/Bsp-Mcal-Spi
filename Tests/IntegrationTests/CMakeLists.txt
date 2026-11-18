@@ -1,6 +1,6 @@
 #===================== Integration tests configuration ========================#
-# Integration tests of Spi module on target (NUCLEO-G474RE, NUCLEO-G431RB). Registered in module
-# CMakeLists.txt by IntegrationTesting_AddPath() and created by
+# Integration tests of Spi module on target (NUCLEO-G474RE, NUCLEO-G431RB, NUCLEO-G491RE).
+# Registered in module CMakeLists.txt by IntegrationTesting_AddPath() and created by
 # IntegrationTesting_Generate() in "IntegrationTest" build
 # (see EmBi_Platform/CMake/IntegrationTesting/README.md).
 #
